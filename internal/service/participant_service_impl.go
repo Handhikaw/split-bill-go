@@ -1,0 +1,166 @@
+package service
+
+import (
+	"errors"
+
+	"github.com/harkandavez/split-bill-go/internal/model"
+	"github.com/harkandavez/split-bill-go/internal/model/dto"
+	"github.com/harkandavez/split-bill-go/internal/model/entity"
+	"github.com/harkandavez/split-bill-go/internal/repository"
+	"gorm.io/gorm"
+)
+
+type participantServiceImpl struct {
+	repo            repository.ParticipantRepository
+	repoBill        repository.BillRepository
+	expenseService  ExpenseService
+	activityService ActivityService
+	db              *gorm.DB
+}
+
+func NewParticipantService(
+	repo repository.ParticipantRepository,
+	repoBill repository.BillRepository,
+	expenseService ExpenseService,
+	activityService ActivityService,
+	db *gorm.DB,
+) ParticipantService {
+	return &participantServiceImpl{
+		repo:            repo,
+		repoBill:        repoBill,
+		expenseService:  expenseService,
+		activityService: activityService,
+		db:              db,
+	}
+}
+
+// validateActor memastikan actor (dari header X-Participant-ID) adalah
+// participant bill ini. 0 = tanpa header -> lolos (log di-skip).
+// Tanpa validasi ini, id ngarang masuk ke activity_logs -> FK violation.
+func (s *participantServiceImpl) validateActor(billID int64, actionParticipant int64) error {
+	if actionParticipant == 0 {
+		return nil
+	}
+	ok, err := s.repo.ExistsByIDAndBillID(actionParticipant, billID)
+	if err != nil {
+		return model.NewInternalError("Database error")
+	}
+	if !ok {
+		return model.NewBadRequest("invalid participant")
+	}
+	return nil
+}
+
+func (s *participantServiceImpl) UpsertParticipant(publicID string, actionParticipant int64, req dto.ParticipantRq) (dto.ParticipantRs, error) {
+
+	bill, err := s.repoBill.GetBillByPublicID(publicID)
+	if err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return dto.ParticipantRs{}, model.NewNotFound("Public Id not found")
+		}
+		return dto.ParticipantRs{}, model.NewInternalError("Database error")
+	}
+
+	if err := s.validateActor(bill.ID, actionParticipant); err != nil {
+		return dto.ParticipantRs{}, err
+	}
+
+	isOwner := false
+	if req.IsOwner != nil {
+		isOwner = *req.IsOwner
+	}
+
+	participant := &entity.Participant{
+		BillID:  bill.ID,
+		Name:    req.Name,
+		UserID:  req.UserID,
+		IsOwner: isOwner,
+	}
+
+	participantId, err := s.repo.Upsert(participant)
+	if err != nil {
+		return dto.ParticipantRs{}, model.NewInternalError("Failed Upsert Participant")
+	}
+
+	s.activityService.Log(entity.ActivityLog{
+		BillID:        bill.ID,
+		ParticipantID: actionParticipant,
+		ActionType:    "UPSERT_PARTICIPANT",
+		TargetName:    &req.Name,
+	})
+
+	return dto.ParticipantRs{
+		ID:   participantId,
+		Name: req.Name,
+	}, nil
+}
+
+func (s *participantServiceImpl) RemoveParticipant(publicID string, id int64, actionParticipant int64) error {
+	bill, err := s.repoBill.GetBillByPublicID(publicID)
+	if err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return model.NewNotFound("Public Id not found")
+		}
+		return model.NewInternalError("Database error")
+	}
+
+	if err := s.validateActor(bill.ID, actionParticipant); err != nil {
+		return err
+	}
+
+	// Self-delete (keluar grup): actor ikut terhapus sehingga tidak bisa
+	// dipakai sebagai FK activity log -> log tanpa actor.
+	logActor := actionParticipant
+	if logActor == id {
+		logActor = 0
+	}
+
+	return s.db.Transaction(func(tx *gorm.DB) error {
+		participant, err := s.repo.FindByID(id)
+		if err != nil {
+			if errors.Is(err, gorm.ErrRecordNotFound) {
+				return model.NewNotFound("Participant not found")
+			}
+			return model.NewInternalError("Database error")
+		}
+		if participant.BillID != bill.ID {
+			return model.NewNotFound("Participant not found in this bill")
+		}
+
+		expenseIDs, err := s.repo.GetAffectedExpenseIDsByParticipantID(tx, id)
+		if err != nil {
+			return model.NewInternalError("Failed read participant expenses")
+		}
+
+		if err := s.repo.DeleteExpenseItemParticipantsByParticipantID(tx, id); err != nil {
+			return model.NewInternalError("Failed delete item participants")
+		}
+
+		if err := s.repo.DeleteExpenseParticipantsByParticipantID(tx, id); err != nil {
+			return model.NewInternalError("Failed delete expense participants")
+		}
+
+		if err := s.repo.DeletePaymentsByParticipantID(tx, id); err != nil {
+			return model.NewInternalError("Failed delete participant payments")
+		}
+
+		for _, expenseID := range expenseIDs {
+			if err := s.expenseService.SyncExpenseTotal(tx, expenseID); err != nil {
+				return model.NewInternalError("Failed sync expense total")
+			}
+		}
+
+		if err := tx.Delete(participant).Error; err != nil {
+			return model.NewInternalError("Failed delete participant")
+		}
+
+		s.activityService.Log(entity.ActivityLog{
+			BillID:        participant.BillID,
+			ParticipantID: logActor,
+			ActionType:    "DELETE_PARTICIPANT",
+			TargetName:    &participant.Name,
+		})
+
+		return nil
+	})
+}
