@@ -10,4 +10,5 @@ type GoalRepository interface {
 	FindContributionByIDAndBillID(id, billID int64) (*entity.Contribution, error)
 	DeleteContribution(contribution *entity.Contribution) error
 	CountContributionsByParticipantID(participantID int64) (int64, error)
+	UpdateGoalBill(billID int64, billFields map[string]any, goalFields map[string]any) error
 }

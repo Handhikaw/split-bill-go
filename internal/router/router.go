@@ -26,7 +26,7 @@ func RegisterRoutes(r *gin.Engine, db *gorm.DB, cfg *config.Config) {
 	billService := service.NewBillService(billRepo, expenseRepo, participantRepo, paymentRepo, goalRepo, activityService, db)
 	expenseService := service.NewExpenseService(expenseRepo, billRepo, participantRepo, db, activityService)
 	participantService := service.NewParticipantService(participantRepo, billRepo, expenseService, activityService, goalRepo, db)
-	paymentService := service.NewPaymentService(paymentRepo, billRepo, participantRepo)
+	paymentService := service.NewPaymentService(paymentRepo, billRepo, participantRepo, db)
 	userService := service.NewUserService(userRepo, cfg.JWTSecret)
 	goalService := service.NewGoalService(goalRepo, billRepo, participantRepo, activityService, db)
 
@@ -58,6 +58,7 @@ func RegisterRoutes(r *gin.Engine, db *gorm.DB, cfg *config.Config) {
 		api.GET("/goal-bills/:public_id", goalHandler.GetGoalBill)
 		api.POST("/goal-bills/:public_id/join", billHandler.JoinSplitBill)
 		api.GET("/goal-bills/:public_id/activities", activityHandler.GetActivities)
+		api.PATCH("/goal-bills/:public_id", middleware.ParticipantMiddleware(), goalHandler.UpdateGoalBill)
 		api.POST("/goal-bills/:public_id/contributions", middleware.ParticipantMiddleware(), goalHandler.AddContribution)
 		api.DELETE("/goal-bills/:public_id/contributions/:id", middleware.ParticipantMiddleware(), goalHandler.DeleteContribution)
 

@@ -61,3 +61,19 @@ func (r *goalRepositoryImpl) CountContributionsByParticipantID(participantID int
 		Count(&count).Error
 	return count, err
 }
+
+func (r *goalRepositoryImpl) UpdateGoalBill(billID int64, billFields map[string]any, goalFields map[string]any) error {
+	return r.db.Transaction(func(tx *gorm.DB) error {
+		if len(billFields) > 0 {
+			if err := tx.Model(&entity.Bill{}).Where("id = ?", billID).Updates(billFields).Error; err != nil {
+				return err
+			}
+		}
+		if len(goalFields) > 0 {
+			if err := tx.Model(&entity.GoalBill{}).Where("bill_id = ?", billID).Updates(goalFields).Error; err != nil {
+				return err
+			}
+		}
+		return nil
+	})
+}

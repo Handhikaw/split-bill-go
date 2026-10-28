@@ -124,6 +124,7 @@ func paymentSvc(payments []entity.Payment) (service.PaymentService, *stubPayment
 		payRepo,
 		&stubBillRepo{bill: testBill()},
 		&stubParticipantRepo{members: map[int64]bool{23: true, 24: true}},
+		nil,
 	)
 	return svc, payRepo
 }

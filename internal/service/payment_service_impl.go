@@ -17,17 +17,20 @@ type paymentServiceImpl struct {
 	repo            repository.PaymentRepository
 	repoBill        repository.BillRepository
 	repoParticipant repository.ParticipantRepository
+	db              *gorm.DB
 }
 
 func NewPaymentService(
 	repo repository.PaymentRepository,
 	repoBill repository.BillRepository,
 	repoParticipant repository.ParticipantRepository,
+	db *gorm.DB,
 ) PaymentService {
 	return &paymentServiceImpl{
 		repo:            repo,
 		repoBill:        repoBill,
 		repoParticipant: repoParticipant,
+		db:              db,
 	}
 }
 
@@ -39,6 +42,14 @@ func (p *paymentServiceImpl) ProcessPayment(publicID string, req dto.PaymentRq) 
 			return model.NewNotFound("Split bill not found")
 		}
 		return model.NewInternalError("Database error")
+	}
+
+	access, err := LoadBillAccess(p.db, bill)
+	if err != nil {
+		return err
+	}
+	if access.ReadOnly {
+		return access.ReadOnlyError()
 	}
 
 	var exists bool

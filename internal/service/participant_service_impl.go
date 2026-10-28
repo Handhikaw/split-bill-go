@@ -64,6 +64,14 @@ func (s *participantServiceImpl) UpsertParticipant(publicID string, actionPartic
 		return dto.ParticipantRs{}, model.NewInternalError("Database error")
 	}
 
+	access, err := LoadBillAccess(s.db, bill)
+	if err != nil {
+		return dto.ParticipantRs{}, err
+	}
+	if access.ReadOnly {
+		return dto.ParticipantRs{}, access.ReadOnlyError()
+	}
+
 	if err := s.validateActor(bill.ID, actionParticipant); err != nil {
 		return dto.ParticipantRs{}, err
 	}
@@ -103,6 +111,17 @@ func (s *participantServiceImpl) UpsertParticipant(publicID string, actionPartic
 		isOwner = *req.IsOwner
 	}
 
+	// Baris baru = tambah anggota; klaim (req.ID != nil) tidak kena limit.
+	if access.MaxParticipants > 0 {
+		participants, err := s.repo.GetParticipants(bill.ID)
+		if err != nil {
+			return dto.ParticipantRs{}, model.NewInternalError("Database error")
+		}
+		if len(participants) >= access.MaxParticipants {
+			return dto.ParticipantRs{}, access.ParticipantLimitError()
+		}
+	}
+
 	participant := &entity.Participant{
 		BillID:  bill.ID,
 		Name:    req.Name,
@@ -135,6 +154,14 @@ func (s *participantServiceImpl) RemoveParticipant(publicID string, id int64, ac
 			return model.NewNotFound("Public Id not found")
 		}
 		return model.NewInternalError("Database error")
+	}
+
+	access, err := LoadBillAccess(s.db, bill)
+	if err != nil {
+		return err
+	}
+	if access.ReadOnly {
+		return access.ReadOnlyError()
 	}
 
 	if err := s.validateActor(bill.ID, actionParticipant); err != nil {

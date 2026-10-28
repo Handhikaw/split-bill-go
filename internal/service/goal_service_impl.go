@@ -53,6 +53,34 @@ func cleanOptionalText(v *string, max int) *string {
 	return &s
 }
 
+func billAccessOrError(db *gorm.DB, bill *entity.Bill) (BillAccess, error) {
+	access, err := LoadBillAccess(db, bill)
+	if err != nil {
+		return BillAccess{}, err
+	}
+	if access.ReadOnly {
+		return BillAccess{}, access.ReadOnlyError()
+	}
+	return access, nil
+}
+
+func (s *goalServiceImpl) requireOwner(billID, actorParticipantID int64) error {
+	if actorParticipantID <= 0 {
+		return model.NewUnauthorized("klaim sebagai owner dulu")
+	}
+	p, err := s.repoParticipant.FindByID(actorParticipantID)
+	if err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return model.NewUnauthorized("hanya owner yang bisa mengubah patungan")
+		}
+		return model.NewInternalError("Database error")
+	}
+	if p.BillID != billID || !p.IsOwner {
+		return model.NewUnauthorized("hanya owner yang bisa mengubah patungan")
+	}
+	return nil
+}
+
 func (s *goalServiceImpl) CreateGoalBill(req dto.CreateGoalBillRq, actorUserID *int64) (dto.CreateGoalBillRs, error) {
 	if !money.IsSupportedCurrency(req.Currency) {
 		return dto.CreateGoalBillRs{}, model.NewBadRequest("unsupported currency")
@@ -209,6 +237,7 @@ func (s *goalServiceImpl) GetGoalBill(publicID string) (dto.GetGoalBillRs, error
 		progress = append(progress, dto.GoalParticipantProgress{
 			ParticipantID:     p.ID,
 			Name:              p.Name,
+			IsOwner:           p.IsOwner,
 			TotalContributed:  money.New(amount, bill.Currency).String(),
 			ContributionCount: count,
 		})
@@ -217,6 +246,11 @@ func (s *goalServiceImpl) GetGoalBill(publicID string) (dto.GetGoalBillRs, error
 	remaining := goal.TargetAmount - collected
 	if remaining < 0 {
 		remaining = 0
+	}
+
+	access, err := LoadBillAccess(s.db, bill)
+	if err != nil {
+		return dto.GetGoalBillRs{}, err
 	}
 
 	return dto.GetGoalBillRs{
@@ -229,8 +263,18 @@ func (s *goalServiceImpl) GetGoalBill(publicID string) (dto.GetGoalBillRs, error
 		Remaining:      money.New(remaining, bill.Currency).String(),
 		Description:    goal.Description,
 		ExpiredAt:      bill.ExpiredAt,
-		Participants:   progress,
-		Contributions:  contributions,
+		Plan:           access.Plan,
+		ReadOnly:       access.ReadOnly,
+		Limits: dto.BillLimits{
+			MaxParticipants: access.MaxParticipants,
+			MaxExpenses:     access.MaxExpenses,
+		},
+		Usage: dto.BillUsage{
+			ParticipantCount: len(participants),
+			ExpenseCount:     0,
+		},
+		Participants:  progress,
+		Contributions: contributions,
 	}, nil
 }
 
@@ -264,6 +308,10 @@ func (s *goalServiceImpl) AddContribution(publicID string, actorParticipantID in
 			return dto.GoalContributionItem{}, model.NewNotFound("Patungan tidak ditemukan")
 		}
 		return dto.GoalContributionItem{}, model.NewInternalError("Database error")
+	}
+
+	if _, err := billAccessOrError(s.db, bill); err != nil {
+		return dto.GoalContributionItem{}, err
 	}
 
 	exists, err := s.repoParticipant.ExistsByIDAndBillID(req.ParticipantID, bill.ID)
@@ -334,6 +382,10 @@ func (s *goalServiceImpl) DeleteContribution(publicID string, contributionID int
 		return model.NewInternalError("Database error")
 	}
 
+	if _, err := billAccessOrError(s.db, bill); err != nil {
+		return err
+	}
+
 	if err := s.repoGoal.DeleteContribution(row); err != nil {
 		return model.NewInternalError("failed to delete contribution")
 	}
@@ -353,4 +405,86 @@ func (s *goalServiceImpl) DeleteContribution(publicID string, contributionID int
 	})
 
 	return nil
+}
+
+func (s *goalServiceImpl) UpdateGoalBill(
+	publicID string,
+	actorParticipantID int64,
+	req dto.UpdateGoalBillRq,
+) (dto.GetGoalBillRs, error) {
+	bill, err := s.repoBill.GetBillByPublicID(publicID)
+	if err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return dto.GetGoalBillRs{}, model.NewNotFound("Patungan tidak ditemukan")
+		}
+		return dto.GetGoalBillRs{}, model.NewInternalError("Database error")
+	}
+
+	if _, err := s.repoGoal.GetGoalByBillID(bill.ID); err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return dto.GetGoalBillRs{}, model.NewNotFound("Patungan tidak ditemukan")
+		}
+		return dto.GetGoalBillRs{}, model.NewInternalError("Database error")
+	}
+
+	if _, err := billAccessOrError(s.db, bill); err != nil {
+		return dto.GetGoalBillRs{}, err
+	}
+	if err := s.requireOwner(bill.ID, actorParticipantID); err != nil {
+		return dto.GetGoalBillRs{}, err
+	}
+
+	billFields := map[string]any{}
+	goalFields := map[string]any{}
+
+	if req.Title != nil {
+		title := strings.TrimSpace(*req.Title)
+		if title == "" {
+			return dto.GetGoalBillRs{}, model.NewBadRequest("title tidak boleh kosong")
+		}
+		if len(title) > 150 {
+			title = title[:150]
+		}
+		billFields["name"] = title
+	}
+
+	if req.TargetAmount != nil {
+		target, err := money.FromString(*req.TargetAmount, bill.Currency)
+		if err != nil {
+			return dto.GetGoalBillRs{}, model.NewBadRequest("invalid target_amount format")
+		}
+		if !target.IsPositive() {
+			return dto.GetGoalBillRs{}, model.NewBadRequest("target_amount must be greater than zero")
+		}
+		goalFields["target_amount"] = target.Amount
+	}
+
+	if req.Description != nil {
+		if desc := cleanOptionalText(req.Description, 255); desc != nil {
+			goalFields["description"] = *desc
+		} else {
+			goalFields["description"] = nil
+		}
+	}
+
+	if len(billFields) == 0 && len(goalFields) == 0 {
+		return dto.GetGoalBillRs{}, model.NewBadRequest("tidak ada field yang diubah")
+	}
+
+	if err := s.repoGoal.UpdateGoalBill(bill.ID, billFields, goalFields); err != nil {
+		return dto.GetGoalBillRs{}, model.NewInternalError("failed to update goal bill")
+	}
+
+	logName := bill.Name
+	if v, ok := billFields["name"].(string); ok {
+		logName = v
+	}
+	s.activityService.Log(entity.ActivityLog{
+		BillID:        bill.ID,
+		ParticipantID: actorParticipantID,
+		ActionType:    "UPDATE_GOAL_BILL",
+		TargetName:    &logName,
+	})
+
+	return s.GetGoalBill(publicID)
 }

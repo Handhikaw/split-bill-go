@@ -65,7 +65,8 @@ PUT  /api/payment/:public_id           # ProcessPayment {expense_id, participant
 # Patungan (goal bill): target total + kontribusi bebas (uang sudah diterima).
 POST   /api/goal-bills                    # OptionalAuth, {title,currency,target_amount,description?,creator_name?} -> {public_id,owner_participant_id,...}
 GET    /api/goal-bills/:public_id         # bill + goal + participants + contributions + total_collected/remaining
-POST   /api/goal-bills/:public_id/join    # reuse JoinSplitBill {name,user_id?}
+PATCH  /api/goal-bills/:public_id         # owner-only (X-Participant-ID is_owner): {title?,target_amount?,description?}
+POST   /api/goal-bills/:public_id/join    # reuse JoinSplitBill {name,user_id?} (ditolak bila expired)
 POST   /api/goal-bills/:public_id/contributions      # {participant_id, amount string, note?}
 DELETE /api/goal-bills/:public_id/contributions/:id
 GET    /api/goal-bills/:public_id/activities
@@ -105,7 +106,7 @@ DELETE /api/expense/:public_id/:expense_id/item/:item_id
 | `User` | `users` | `username, email unique, role (ANONYMOUS/PREMIUM...), anon_id, oauth_*` |
 
 ## 8. Core Logic (jangan duplikasi)
-- **`helper/money/money.go`**: `Money{Amount int64, Currency string}` smallest unit. Scale: `IDR:0, JPY:0, USD:2, EUR:2, KWD:3`, currency lain **panic**. `FromString/FromFloat`, `Add/Sub/Multiply`, `Split(n)` (sisa ke index awal), `SplitRandom`, `ApplyTax/ServiceCharge/Discount*` (round Half-Up), `String()` format sesuai scale.
+- **`helper/money/money.go`**: `Money{Amount int64, Currency string}` smallest unit. Scale kurasi: `IDR/KRW/VND/JPY:0`, `USD/EUR/GBP/SGD/MYR/THB/AUD/CAD/CNY/HKD/PHP/INR/AED/SAR:2`, `KWD:3`; currency lain **panic**. `FromString/FromFloat`, `Add/Sub/Multiply`, `Split(n)` (sisa ke index awal), `SplitRandom`, `ApplyTax/ServiceCharge/Discount*` (round Half-Up), `String()` format sesuai scale.
 - **`helper/money/split/split.go`**: versi `int64` mentah dari `SplitRandom`.
 - **`helper/engine/engine.go`**:
   - `CalculateBalances(participants, expenses, items, itemParticipants, expenseParticipants, payments, currency)`: kredit dari `payments` (`paid_by`, agregat level bill — `ExpenseID` payment diabaikan by design). Debit: expense ber-item → dari `itemParticipants.share_amount`; expense tanpa item (SIMPLE) → dari `expenseParticipants.share_amount` (keduanya tidak pernah digabung — summary table diabaikan bila ada item, anti double-count). Share milik participant yang sudah dihapus di-skip. `tax+charge-discount` dibagi proporsional (rounding `math.Round`, sisa ke partisipan terakhir by ID sort).
@@ -116,7 +117,10 @@ DELETE /api/expense/:public_id/:expense_id/item/:item_id
 ## 9. Aturan Bisnis Penting
 - Split Bill = 1 `Bill` + 1 `Expense{type:SPLIT_BILL}` (dibuat di `bill_service_impl.go:38-62`).
 - Group Bill free: `ExpiredAt = now+48h`, premium (`user.role==PREMIUM` case-insensitive): `nil` (kekal). Lihat `CreateGroupBill`.
-- Patungan (goal): `bill.kind='goal'` + 1 baris `goal_bill`; free `ExpiredAt = now+30d`, premium `nil`. Total terkumpul = `SUM(contribution.amount)` saat baca (tanpa kolom cache). Kontribusi = uang diterima (tanpa status pledge). Hapus peserta yang sudah punya kontribusi ditolak 400 (`participant_service_impl.go`).
+- Patungan (goal): `bill.kind='goal'` + 1 baris `goal_bill`; free `ExpiredAt = now+30d`, premium `nil`. Total terkumpul = `SUM(contribution.amount)` saat baca (tanpa kolom cache). Kontribusi = uang diterima (tanpa status pledge). Hapus peserta yang sudah punya kontribusi ditolak 400 (`participant_service_impl.go`). Setelah `expired_at` lewat: read-only (kontribusi, edit goal, join, ubah peserta ditolak 400); `PATCH /goal-bills` wajib actor `is_owner`.
+- **Free/Premium guardrails** (`internal/service/bill_access.go`): premium = role `PREMIUM` milik `bill.created_by` (dinamis, login saja bukan premium). Group free max 5 peserta & 15 expense; goal free max 5 peserta; split tanpa gate. Expired/closed → read-only untuk Free. `GetGroupBillRs`/`GetGoalBillRs` mengirim `plan`, `read_only`, `limits`, `usage`. Guard ada di expense/participant/payment/join/goal service; pesan error 400 dipakai frontend (apiFetch parse envelope).
+- `ListMyBills`: goal mengirim `target_amount` + `collected_amount` (string), `my_net=null`; kind dari `bill.kind`.
+- **Kontrak tulis uang**: frontend wajib mengirim string major sesuai scale (`toBackendMajor`), bukan minor-int. `money.FromString` membaca major ("10.50" USD = 1050). Audit data USD/EUR lama ada di `db/audits/`.
 - DDL manual: `db/migrations/0001_patungan.up.sql` (wajib dijalankan sebelum deploy; tidak ada auto-migrate).
 - `AuthAnon`: wajib header `X-Anonymous-Id` UUID valid; cari/buat `User{role:ANONYMOUS}`; JWT HS256 `user_id, role`, exp 30 hari. `jwtSecret` di-inject dari `cfg.JWTSecret` via `router.RegisterRoutes(r, db, cfg)`.
 - Identitas create bill: `OptionalAuthMiddleware(cfg.JWTSecret)` di `POST /split-bills` & `POST /group-bills` — ada Bearer valid → context `auth_user_id`/`auth_role`, tanpa token → guest. Handler baca via `middleware.AuthUserID(c)` → service pakai langsung sebagai `bill.created_by`. Body `created_by` sudah **dihapus** dari `CreateSpiltBillRq`/`CreateGroupBillRq` (tidak ada lagi jalur spoofing).

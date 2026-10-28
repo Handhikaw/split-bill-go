@@ -86,3 +86,22 @@ func (h *GoalHandler) DeleteContribution(c *gin.Context) {
 
 	c.JSON(http.StatusOK, model.Success(nil))
 }
+
+func (h *GoalHandler) UpdateGoalBill(c *gin.Context) {
+	publicID := c.Param("public_id")
+	actorID := participantIDFromContext(c)
+
+	var req dto.UpdateGoalBillRq
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.Error(model.NewBadRequest("invalid request body: " + err.Error()))
+		return
+	}
+
+	res, err := h.goalService.UpdateGoalBill(publicID, actorID, req)
+	if err != nil {
+		_ = c.Error(err)
+		return
+	}
+
+	c.JSON(http.StatusOK, model.Success(res))
+}

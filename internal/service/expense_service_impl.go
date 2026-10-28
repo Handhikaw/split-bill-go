@@ -38,6 +38,18 @@ func (s *expenseServiceImpl) getBillByPublicID(publicID string) (*entity.Bill, e
 	return bill, nil
 }
 
+// ensureWritable menolak semua mutasi saat bill read-only (expired/closed free).
+func (s *expenseServiceImpl) ensureWritable(bill *entity.Bill) (BillAccess, error) {
+	access, err := LoadBillAccess(s.db, bill)
+	if err != nil {
+		return BillAccess{}, err
+	}
+	if access.ReadOnly {
+		return BillAccess{}, access.ReadOnlyError()
+	}
+	return access, nil
+}
+
 func (s *expenseServiceImpl) validateExpenseBelongsToBill(expense *entity.Expense, billID int64) error {
 	if expense.BillID != billID {
 		return model.NewNotFound("Expense not found in this bill")
@@ -71,6 +83,20 @@ func (s *expenseServiceImpl) CreateExpense(req dto.CreateExpenseRq) (dto.CreateE
 			return dto.CreateExpenseRs{}, model.NewNotFound("Bill not found")
 		}
 		return dto.CreateExpenseRs{}, model.NewInternalError("Database error")
+	}
+
+	access, err := s.ensureWritable(bill)
+	if err != nil {
+		return dto.CreateExpenseRs{}, err
+	}
+	if access.MaxExpenses > 0 {
+		expenses, err := s.repo.FindExpenseByBillID(bill.ID)
+		if err != nil {
+			return dto.CreateExpenseRs{}, model.NewInternalError("Database error")
+		}
+		if len(expenses) >= access.MaxExpenses {
+			return dto.CreateExpenseRs{}, access.ExpenseLimitError()
+		}
 	}
 
 	var amount money.Money = money.New(0, bill.Currency)
@@ -158,6 +184,10 @@ func (s *expenseServiceImpl) CreateExpense(req dto.CreateExpenseRq) (dto.CreateE
 func (s *expenseServiceImpl) UpdateExpense(publicID string, expenseID int64, participantID int64, req dto.UpdateExpenseRq) (dto.UpdateExpenseRs, error) {
 	bill, err := s.getBillByPublicID(publicID)
 	if err != nil {
+		return dto.UpdateExpenseRs{}, err
+	}
+
+	if _, err := s.ensureWritable(bill); err != nil {
 		return dto.UpdateExpenseRs{}, err
 	}
 
@@ -356,6 +386,10 @@ func (s *expenseServiceImpl) DeleteExpense(publicID string, expenseID int64, par
 		return err
 	}
 
+	if _, err := s.ensureWritable(bill); err != nil {
+		return err
+	}
+
 	actor, err := s.resolveActor(bill.ID, participantID)
 	if err != nil {
 		return err
@@ -410,6 +444,10 @@ func (s *expenseServiceImpl) DeleteExpense(publicID string, expenseID int64, par
 func (s *expenseServiceImpl) CreateExpenseItem(publicID string, expenseID int64, participantID int64, req dto.CreateExpenseItemRq) (dto.CreateExpenseItemRs, error) {
 	bill, err := s.getBillByPublicID(publicID)
 	if err != nil {
+		return dto.CreateExpenseItemRs{}, err
+	}
+
+	if _, err := s.ensureWritable(bill); err != nil {
 		return dto.CreateExpenseItemRs{}, err
 	}
 
@@ -612,6 +650,10 @@ func (s *expenseServiceImpl) UpdateExpenseItem(publicID string, expenseID int64,
 		return err
 	}
 
+	if _, err := s.ensureWritable(bill); err != nil {
+		return err
+	}
+
 	actor, err := s.resolveActor(bill.ID, participantID)
 	if err != nil {
 		return err
@@ -748,6 +790,10 @@ func (s *expenseServiceImpl) UpdateExpenseItem(publicID string, expenseID int64,
 func (s *expenseServiceImpl) DeleteExpenseItem(publicID string, expenseID int64, itemID int64, participantID int64) error {
 	bill, err := s.getBillByPublicID(publicID)
 	if err != nil {
+		return err
+	}
+
+	if _, err := s.ensureWritable(bill); err != nil {
 		return err
 	}
 

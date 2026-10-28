@@ -54,9 +54,25 @@ type GetGroupBillRs struct {
 	Name         string               `json:"name"`
 	Currency     string               `json:"currency"`
 	TotalAmount  string               `json:"total_amount"`
+	Plan         string               `json:"plan"`
+	ReadOnly     bool                 `json:"read_only"`
+	ExpiredAt    *time.Time           `json:"expired_at"`
+	Limits       BillLimits           `json:"limits"`
+	Usage        BillUsage            `json:"usage"`
 	Expense      []Expense            `json:"expense"`
 	Participants []ParticipantBalance `json:"participants"`
 	Settlements  []Settlement         `json:"settlements"`
+}
+
+// BillLimits: 0 = unlimited (Premium).
+type BillLimits struct {
+	MaxParticipants int `json:"max_participants"`
+	MaxExpenses     int `json:"max_expenses"`
+}
+
+type BillUsage struct {
+	ParticipantCount int `json:"participant_count"`
+	ExpenseCount     int `json:"expense_count"`
 }
 
 type Settlement struct {

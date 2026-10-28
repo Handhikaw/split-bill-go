@@ -7,4 +7,5 @@ type GoalService interface {
 	GetGoalBill(publicID string) (dto.GetGoalBillRs, error)
 	AddContribution(publicID string, actorParticipantID int64, req dto.GoalContributionRq) (dto.GoalContributionItem, error)
 	DeleteContribution(publicID string, contributionID int64, actorParticipantID int64) error
+	UpdateGoalBill(publicID string, actorParticipantID int64, req dto.UpdateGoalBillRq) (dto.GetGoalBillRs, error)
 }
