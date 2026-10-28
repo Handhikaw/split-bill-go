@@ -78,6 +78,22 @@ func LoadBillAccess(db *gorm.DB, bill *entity.Bill) (BillAccess, error) {
 	return evaluateBillAccess(bill, role), nil
 }
 
+// IsPremiumUser mengecek role user (bukan token/login). Nil/guest = false.
+func IsPremiumUser(db *gorm.DB, userID *int64) (bool, error) {
+	if userID == nil {
+		return false, nil
+	}
+	var user entity.User
+	err := db.Select("id, role").Where("id = ?", *userID).First(&user).Error
+	if err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return false, nil
+		}
+		return false, model.NewInternalError("Database error")
+	}
+	return strings.EqualFold(strings.TrimSpace(user.Role), "PREMIUM"), nil
+}
+
 func (a BillAccess) ReadOnlyError() error {
 	return model.NewBadRequest("masa aktif bill sudah habis; upgrade ke Premium untuk lanjut")
 }

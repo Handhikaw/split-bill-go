@@ -21,14 +21,16 @@ func RegisterRoutes(r *gin.Engine, db *gorm.DB, cfg *config.Config) {
 	activityRepo := repository.NewActivityRepository(db)
 	userRepo := repository.NewUserRepository(db)
 	goalRepo := repository.NewGoalRepository(db)
+	settlementRepo := repository.NewSettlementPaymentRepository(db)
 
 	activityService := service.NewActivityService(activityRepo, billRepo, participantRepo)
-	billService := service.NewBillService(billRepo, expenseRepo, participantRepo, paymentRepo, goalRepo, activityService, db)
+	billService := service.NewBillService(billRepo, expenseRepo, participantRepo, paymentRepo, goalRepo, settlementRepo, activityService, db)
 	expenseService := service.NewExpenseService(expenseRepo, billRepo, participantRepo, db, activityService)
-	participantService := service.NewParticipantService(participantRepo, billRepo, expenseService, activityService, goalRepo, db)
+	participantService := service.NewParticipantService(participantRepo, billRepo, expenseService, activityService, goalRepo, settlementRepo, db)
 	paymentService := service.NewPaymentService(paymentRepo, billRepo, participantRepo, db)
 	userService := service.NewUserService(userRepo, cfg.JWTSecret)
 	goalService := service.NewGoalService(goalRepo, billRepo, participantRepo, activityService, db)
+	settlementService := service.NewSettlementService(settlementRepo, billRepo, participantRepo, activityService, db)
 
 	billHandler := handler.NewBillHandler(billService)
 	activityHandler := handler.NewActivityHandler(activityService)
@@ -37,19 +39,23 @@ func RegisterRoutes(r *gin.Engine, db *gorm.DB, cfg *config.Config) {
 	paymentHandler := handler.NewPaymentHandler(paymentService)
 	userHandler := handler.NewUserHandler(userService)
 	goalHandler := handler.NewGoalHandler(goalService)
+	settlementHandler := handler.NewSettlementHandler(settlementService)
 
 	optionalAuth := middleware.OptionalAuthMiddleware(cfg.JWTSecret)
+	apiKeyAuth := middleware.ApiKeyAuthMiddleware(cfg.JWTSecret)
 
 	r.GET("/health", healthHandler.Health)
 
 	api := r.Group("/api")
 	{
 		api.POST("/split-bills", optionalAuth, billHandler.CreateSplitBill)
-		api.GET("/split-bills/:public_id", billHandler.GetSplitBill)
+		api.GET("/split-bills/:public_id", apiKeyAuth, billHandler.GetSplitBill)
 		api.POST("/group-bills", optionalAuth, billHandler.CreateGroupBill)
-		api.GET("/group-bill/:public_id", billHandler.GetGroupBill)
+		api.GET("/group-bill/:public_id", apiKeyAuth, billHandler.GetGroupBill)
 		api.POST("/split-bills/:public_id/join", billHandler.JoinSplitBill)
 		api.PUT("/payment/:public_id", paymentHandler.ProcessPayment)
+		api.POST("/settlement/:public_id", middleware.ParticipantMiddleware(), settlementHandler.Create)
+		api.DELETE("/settlement/:public_id/:id", middleware.ParticipantMiddleware(), settlementHandler.Delete)
 		api.GET("/group-bill/:public_id/activities", activityHandler.GetActivities)
 		api.GET("/split-bills/:public_id/activities", activityHandler.GetActivities)
 
@@ -65,7 +71,6 @@ func RegisterRoutes(r *gin.Engine, db *gorm.DB, cfg *config.Config) {
 		api.POST("/auth/anonymous", userHandler.AuthAnon)
 		api.POST("/auth/google", userHandler.AuthGoogle)
 
-		apiKeyAuth := middleware.ApiKeyAuthMiddleware(cfg.JWTSecret)
 		api.GET("/me/bills", apiKeyAuth, billHandler.GetMyBills)
 
 		participant := api.Group("/participant")

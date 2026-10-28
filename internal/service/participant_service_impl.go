@@ -14,6 +14,7 @@ type participantServiceImpl struct {
 	repo            repository.ParticipantRepository
 	repoBill        repository.BillRepository
 	repoGoal        repository.GoalRepository
+	repoSettlement  repository.SettlementPaymentRepository
 	expenseService  ExpenseService
 	activityService ActivityService
 	db              *gorm.DB
@@ -25,12 +26,14 @@ func NewParticipantService(
 	expenseService ExpenseService,
 	activityService ActivityService,
 	repoGoal repository.GoalRepository,
+	repoSettlement repository.SettlementPaymentRepository,
 	db *gorm.DB,
 ) ParticipantService {
 	return &participantServiceImpl{
 		repo:            repo,
 		repoBill:        repoBill,
 		repoGoal:        repoGoal,
+		repoSettlement:  repoSettlement,
 		expenseService:  expenseService,
 		activityService: activityService,
 		db:              db,
@@ -194,6 +197,14 @@ func (s *participantServiceImpl) RemoveParticipant(publicID string, id int64, ac
 		}
 		if contributions > 0 {
 			return model.NewBadRequest("peserta sudah punya kontribusi; hapus kontribusinya dulu")
+		}
+
+		settlementsCount, err := s.repoSettlement.CountByParticipantID(id)
+		if err != nil {
+			return model.NewInternalError("Failed read participant settlements")
+		}
+		if settlementsCount > 0 {
+			return model.NewBadRequest("peserta sudah punya riwayat pelunasan; hapus pelunasannya dulu")
 		}
 
 		expenseIDs, err := s.repo.GetAffectedExpenseIDsByParticipantID(tx, id)

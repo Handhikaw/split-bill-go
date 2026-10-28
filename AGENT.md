@@ -61,6 +61,8 @@ POST /api/group-bills                  # OptionalAuth + auto-create owner partic
 GET  /api/group-bill/:public_id        # GetGroupBill (note: singular "group-bill")
 POST /api/split-bills/:public_id/join  # JoinSplitBill {name, user_id?}
 PUT  /api/payment/:public_id           # ProcessPayment {expense_id, participant_id, amount string, old_participant_id?} -> upsert (expense_id,paid_by); bila old_participant_id beda = pindah payer atomik (hapus lama + upsert baru), 404 bila payment lama tidak ada
+POST /api/settlement/:public_id        # Mark-as-paid {from_participant_id,to_participant_id,amount,note?} -> ledger; Premium-only (bill premium ATAU actor premium), actor from/to/owner
+DELETE /api/settlement/:public_id/:id  # hapus ledger pelunasan (guard sama)
 
 # Patungan (goal bill): target total + kontribusi bebas (uang sudah diterima).
 POST   /api/goal-bills                    # OptionalAuth, {title,currency,target_amount,description?,creator_name?} -> {public_id,owner_participant_id,...}
@@ -94,6 +96,7 @@ DELETE /api/expense/:public_id/:expense_id/item/:item_id
 | `Bill` | `bill` | `public_id unique`, `currency(3)`, `kind` (`split`/`group`/`goal`), `status`, `created_by(user)`, `expired_at` |
 | `GoalBill` | `goal_bill` | 1:1 `bill_id` (unique), `target_amount int64`, `description?` |
 | `Contribution` | `contribution` | `bill_id`, `participant_id`, `amount int64`, `note?`, `paid_at` — ledger uang sudah diterima |
+| `SettlementPayment` | `settlement_payment` | `bill_id`, `from/to_participant_id`, `amount int64`, `note?`, `paid_at` — ledger transfer debitur→kreditur (mark-as-paid) |
 | `Expense` | `expense` | `bill_id`, `type` (`SPLIT_BILL`/grup), `amount/tax/discount/charge int64`, `category_id?`, `created_by(participant)` |
 | `ExpenseItem` | `expense_item` | `expense_id`, `name`, `quantity`, `price int64` |
 | `Participant` | `participant` | `bill_id`, `name`, `user_id?`, `is_owner` |
@@ -118,7 +121,8 @@ DELETE /api/expense/:public_id/:expense_id/item/:item_id
 - Split Bill = 1 `Bill` + 1 `Expense{type:SPLIT_BILL}` (dibuat di `bill_service_impl.go:38-62`).
 - Group Bill free: `ExpiredAt = now+48h`, premium (`user.role==PREMIUM` case-insensitive): `nil` (kekal). Lihat `CreateGroupBill`.
 - Patungan (goal): `bill.kind='goal'` + 1 baris `goal_bill`; free `ExpiredAt = now+30d`, premium `nil`. Total terkumpul = `SUM(contribution.amount)` saat baca (tanpa kolom cache). Kontribusi = uang diterima (tanpa status pledge). Hapus peserta yang sudah punya kontribusi ditolak 400 (`participant_service_impl.go`). Setelah `expired_at` lewat: read-only (kontribusi, edit goal, join, ubah peserta ditolak 400); `PATCH /goal-bills` wajib actor `is_owner`.
-- **Free/Premium guardrails** (`internal/service/bill_access.go`): premium = role `PREMIUM` milik `bill.created_by` (dinamis, login saja bukan premium). Group free max 5 peserta & 15 expense; goal free max 5 peserta; split tanpa gate. Expired/closed → read-only untuk Free. `GetGroupBillRs`/`GetGoalBillRs` mengirim `plan`, `read_only`, `limits`, `usage`. Guard ada di expense/participant/payment/join/goal service; pesan error 400 dipakai frontend (apiFetch parse envelope).
+- **Mark-as-paid** (`settlement_payment`): hibrida — allowed bila `billAccess.Premium` ATAU role actor `PREMIUM`; actor wajib from/to atau owner; bill read-only ditolak. Engine `ApplySettlementPayments` menambah net `from` dan mengurangi net `to` sebelum `GenerateSettlements`; dipakai GetGroup/GetSplit/ListMyBills. Hapus peserta yang punya ledger ditolak 400.
+- **Free/Premium guardrails** (`internal/service/bill_access.go`): premium = role `PREMIUM` milik `bill.created_by` (dinamis, login saja bukan premium). Group free max 5 peserta & 15 expense; goal free max 5 peserta; split tanpa gate. Expired/closed → read-only untuk Free. `GetGroupBillRs`/`GetSplitBillRs` mengirim `plan`, `read_only`, `viewer_is_premium`, `limits`, `usage`. Guard ada di expense/participant/payment/join/goal service; pesan error 400 dipakai frontend (apiFetch parse envelope).
 - `ListMyBills`: goal mengirim `target_amount` + `collected_amount` (string), `my_net=null`; kind dari `bill.kind`.
 - **Kontrak tulis uang**: frontend wajib mengirim string major sesuai scale (`toBackendMajor`), bukan minor-int. `money.FromString` membaca major ("10.50" USD = 1050). Audit data USD/EUR lama ada di `db/audits/`.
 - DDL manual: `db/migrations/0001_patungan.up.sql` (wajib dijalankan sebelum deploy; tidak ada auto-migrate).

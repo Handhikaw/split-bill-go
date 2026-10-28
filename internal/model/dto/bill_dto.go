@@ -33,35 +33,41 @@ type JoinSplitBillRq struct {
 }
 
 type GetSplitBillRs struct {
-	ID            int64                `json:"id"`
-	ExpenseID     int64                `json:"expense_id"`
-	Status        string               `json:"status"`
-	Name          string               `json:"name"`
-	Currency      string               `json:"currency"`
-	TotalAmount   string               `json:"total_amount"`
-	Tax           string               `json:"tax"`
-	ServiceCharge string               `json:"service_charge"`
-	Discount      string               `json:"discount"`
-	PayerID       int64                `json:"payer_id"`
-	Items         []ExpenseItem        `json:"items"`
-	Participants  []ParticipantBalance `json:"participants"`
-	Settlements   []Settlement         `json:"settlements"`
+	ID                 int64                   `json:"id"`
+	ExpenseID          int64                   `json:"expense_id"`
+	Status             string                  `json:"status"`
+	Name               string                  `json:"name"`
+	Currency           string                  `json:"currency"`
+	TotalAmount        string                  `json:"total_amount"`
+	Tax                string                  `json:"tax"`
+	ServiceCharge      string                  `json:"service_charge"`
+	Discount           string                  `json:"discount"`
+	PayerID            int64                   `json:"payer_id"`
+	Plan               string                  `json:"plan"`
+	ReadOnly           bool                    `json:"read_only"`
+	ViewerIsPremium    bool                    `json:"viewer_is_premium"`
+	Items              []ExpenseItem           `json:"items"`
+	Participants       []ParticipantBalance    `json:"participants"`
+	Settlements        []Settlement            `json:"settlements"`
+	SettlementPayments []SettlementPaymentItem `json:"settlement_payments"`
 }
 
 type GetGroupBillRs struct {
-	ID           int64                `json:"id"`
-	Status       string               `json:"status"`
-	Name         string               `json:"name"`
-	Currency     string               `json:"currency"`
-	TotalAmount  string               `json:"total_amount"`
-	Plan         string               `json:"plan"`
-	ReadOnly     bool                 `json:"read_only"`
-	ExpiredAt    *time.Time           `json:"expired_at"`
-	Limits       BillLimits           `json:"limits"`
-	Usage        BillUsage            `json:"usage"`
-	Expense      []Expense            `json:"expense"`
-	Participants []ParticipantBalance `json:"participants"`
-	Settlements  []Settlement         `json:"settlements"`
+	ID                 int64                   `json:"id"`
+	Status             string                  `json:"status"`
+	Name               string                  `json:"name"`
+	Currency           string                  `json:"currency"`
+	TotalAmount        string                  `json:"total_amount"`
+	Plan               string                  `json:"plan"`
+	ReadOnly           bool                    `json:"read_only"`
+	ExpiredAt          *time.Time              `json:"expired_at"`
+	ViewerIsPremium    bool                    `json:"viewer_is_premium"`
+	Limits             BillLimits              `json:"limits"`
+	Usage              BillUsage               `json:"usage"`
+	Expense            []Expense               `json:"expense"`
+	Participants       []ParticipantBalance    `json:"participants"`
+	Settlements        []Settlement            `json:"settlements"`
+	SettlementPayments []SettlementPaymentItem `json:"settlement_payments"`
 }
 
 // BillLimits: 0 = unlimited (Premium).

@@ -21,6 +21,7 @@ type billServiceImpl struct {
 	repoParticipant repository.ParticipantRepository
 	repoPayment     repository.PaymentRepository
 	repoGoal        repository.GoalRepository
+	repoSettlement  repository.SettlementPaymentRepository
 	activityService ActivityService
 	db              *gorm.DB
 }
@@ -30,6 +31,7 @@ func NewBillService(repo repository.BillRepository,
 	repoParticipant repository.ParticipantRepository,
 	repoPayment repository.PaymentRepository,
 	repoGoal repository.GoalRepository,
+	repoSettlement repository.SettlementPaymentRepository,
 	activityService ActivityService,
 	db *gorm.DB) BillService {
 	return &billServiceImpl{repo: repo,
@@ -37,6 +39,7 @@ func NewBillService(repo repository.BillRepository,
 		repoParticipant: repoParticipant,
 		repoPayment:     repoPayment,
 		repoGoal:        repoGoal,
+		repoSettlement:  repoSettlement,
 		activityService: activityService,
 		db:              db}
 }
@@ -125,7 +128,7 @@ func (s *billServiceImpl) CreateSplitBill(req dto.CreateSpiltBillRq, actorUserID
 }
 
 // GetSplitBil implements [BillService].
-func (s *billServiceImpl) GetSplitBill(publicID string) (*dto.GetSplitBillRs, error) {
+func (s *billServiceImpl) GetSplitBill(publicID string, viewerUserID *int64) (*dto.GetSplitBillRs, error) {
 	// 1. Ambil data mentah dari Repository
 	bill, err := s.repo.GetBillByPublicID(publicID)
 	if err != nil {
@@ -177,12 +180,17 @@ func (s *billServiceImpl) GetSplitBill(publicID string) (*dto.GetSplitBillRs, er
 	if err != nil {
 		return &dto.GetSplitBillRs{}, model.NewInternalError("Database error")
 	}
+	settlementRows, err := s.repoSettlement.ListByBillID(bill.ID)
+	if err != nil {
+		return &dto.GetSplitBillRs{}, model.NewInternalError("Database error")
+	}
 
 	// 2. Jalankan Engine yang kita buat sebelumnya
 	balances, err := engine.CalculateBalances(participants, expenses, items, itemParts, expenseParts, payments, bill.Currency)
 	if err != nil {
 		return &dto.GetSplitBillRs{}, model.NewInternalError("Failed calculate balances")
 	}
+	balances = engine.ApplySettlementPayments(balances, settlementRows)
 	settlements, err := engine.GenerateSettlements(balances)
 	if err != nil {
 		return &dto.GetSplitBillRs{}, model.NewInternalError("Failed generate settlements")
@@ -201,21 +209,64 @@ func (s *billServiceImpl) GetSplitBill(publicID string) (*dto.GetSplitBillRs, er
 		settlements = []dto.Settlement{}
 	}
 
+	access, err := LoadBillAccess(s.db, bill)
+	if err != nil {
+		return &dto.GetSplitBillRs{}, err
+	}
+	viewerPremium, err := IsPremiumUser(s.db, viewerUserID)
+	if err != nil {
+		return &dto.GetSplitBillRs{}, err
+	}
+
 	// 3. Mapping ke Response DTO
 	return &dto.GetSplitBillRs{
-		ID:            bill.ID,
-		ExpenseID:     expenseID,
-		Status:        bill.Status,
-		Name:          bill.Name,
-		Currency:      bill.Currency,
-		TotalAmount:   money.New(s.CalculateTotalAmount(expenses, items), bill.Currency).String(),
-		Tax:           money.New(exp.Tax, bill.Currency).String(),
-		ServiceCharge: money.New(exp.Charge, bill.Currency).String(),
-		Discount:      money.New(exp.Discount, bill.Currency).String(),
-		Items:         itemsDTO,
-		Participants:  balanceDTO,
-		Settlements:   settlements,
+		ID:                 bill.ID,
+		ExpenseID:          expenseID,
+		Status:             bill.Status,
+		Name:               bill.Name,
+		Currency:           bill.Currency,
+		TotalAmount:        money.New(s.CalculateTotalAmount(expenses, items), bill.Currency).String(),
+		Tax:                money.New(exp.Tax, bill.Currency).String(),
+		ServiceCharge:      money.New(exp.Charge, bill.Currency).String(),
+		Discount:           money.New(exp.Discount, bill.Currency).String(),
+		Plan:               access.Plan,
+		ReadOnly:           access.ReadOnly,
+		ViewerIsPremium:    viewerPremium,
+		Items:              itemsDTO,
+		Participants:       balanceDTO,
+		Settlements:        settlements,
+		SettlementPayments: s.mapSettlementPayments(settlementRows, participants, bill.Currency),
 	}, nil
+}
+
+func (s *billServiceImpl) mapSettlementPayments(
+	rows []entity.SettlementPayment,
+	participants []entity.Participant,
+	currency string,
+) []dto.SettlementPaymentItem {
+	nameByID := make(map[int64]string, len(participants))
+	for _, p := range participants {
+		nameByID[p.ID] = p.Name
+	}
+	nameOf := func(id int64) string {
+		if n := nameByID[id]; n != "" {
+			return n
+		}
+		return "Mantan anggota"
+	}
+
+	out := make([]dto.SettlementPaymentItem, 0, len(rows))
+	for _, row := range rows {
+		out = append(out, dto.SettlementPaymentItem{
+			ID:     row.ID,
+			From:   dto.PersonInfo{ID: row.FromParticipantID, Name: nameOf(row.FromParticipantID)},
+			To:     dto.PersonInfo{ID: row.ToParticipantID, Name: nameOf(row.ToParticipantID)},
+			Amount: money.New(row.Amount, currency).String(),
+			Note:   row.Note,
+			PaidAt: row.PaidAt,
+		})
+	}
+	return out
 }
 
 func (s *billServiceImpl) CalculateTotalAmount(expenses []entity.Expense, items []entity.ExpenseItem) int64 {
@@ -405,7 +456,7 @@ func (s *billServiceImpl) CreateGroupBill(req dto.CreateGroupBillRq, actorUserID
 }
 
 // GetGroupBill implements [BillService].
-func (s *billServiceImpl) GetGroupBill(publicID string) (dto.GetGroupBillRs, error) {
+func (s *billServiceImpl) GetGroupBill(publicID string, viewerUserID *int64) (dto.GetGroupBillRs, error) {
 	bill, err := s.repo.GetBillByPublicID(publicID)
 	if err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
@@ -465,11 +516,16 @@ func (s *billServiceImpl) GetGroupBill(publicID string) (dto.GetGroupBillRs, err
 	if err != nil {
 		return dto.GetGroupBillRs{}, model.NewInternalError("Database error")
 	}
+	settlementRows, err := s.repoSettlement.ListByBillID(bill.ID)
+	if err != nil {
+		return dto.GetGroupBillRs{}, model.NewInternalError("Database error")
+	}
 
 	balances, err := engine.CalculateBalances(participants, expenses, items, itemParts, expenseParts, payments, bill.Currency)
 	if err != nil {
 		return dto.GetGroupBillRs{}, model.NewInternalError("Failed calculate balances")
 	}
+	balances = engine.ApplySettlementPayments(balances, settlementRows)
 
 	settlements, err := engine.GenerateSettlements(balances)
 	if err != nil {
@@ -565,16 +621,21 @@ func (s *billServiceImpl) GetGroupBill(publicID string) (dto.GetGroupBillRs, err
 	if err != nil {
 		return dto.GetGroupBillRs{}, err
 	}
+	viewerPremium, err := IsPremiumUser(s.db, viewerUserID)
+	if err != nil {
+		return dto.GetGroupBillRs{}, err
+	}
 
 	return dto.GetGroupBillRs{
-		ID:          bill.ID,
-		Status:      bill.Status,
-		Name:        bill.Name,
-		Currency:    bill.Currency,
-		TotalAmount: money.New(s.CalculateTotalAmount(expenses, items), bill.Currency).String(),
-		Plan:        access.Plan,
-		ReadOnly:    access.ReadOnly,
-		ExpiredAt:   bill.ExpiredAt,
+		ID:              bill.ID,
+		Status:          bill.Status,
+		Name:            bill.Name,
+		Currency:        bill.Currency,
+		TotalAmount:     money.New(s.CalculateTotalAmount(expenses, items), bill.Currency).String(),
+		Plan:            access.Plan,
+		ReadOnly:        access.ReadOnly,
+		ExpiredAt:       bill.ExpiredAt,
+		ViewerIsPremium: viewerPremium,
 		Limits: dto.BillLimits{
 			MaxParticipants: access.MaxParticipants,
 			MaxExpenses:     access.MaxExpenses,
@@ -583,9 +644,10 @@ func (s *billServiceImpl) GetGroupBill(publicID string) (dto.GetGroupBillRs, err
 			ParticipantCount: len(participants),
 			ExpenseCount:     len(expenses),
 		},
-		Expense:      expenseDTO,
-		Participants: balanceDTO,
-		Settlements:  settlements,
+		Expense:            expenseDTO,
+		Participants:       balanceDTO,
+		Settlements:        settlements,
+		SettlementPayments: s.mapSettlementPayments(settlementRows, participants, bill.Currency),
 	}, nil
 }
 
@@ -732,6 +794,10 @@ func (s *billServiceImpl) summarizeBillForUser(
 	if err != nil {
 		return myBillSummary{}, model.NewInternalError("Database error")
 	}
+	settlementRows, err := s.repoSettlement.ListByBillID(bill.ID)
+	if err != nil {
+		return myBillSummary{}, model.NewInternalError("Database error")
+	}
 
 	var expenseParts []entity.ExpenseParticipant
 	if len(expenseIDs) > 0 {
@@ -748,6 +814,7 @@ func (s *billServiceImpl) summarizeBillForUser(
 	if err != nil {
 		return myBillSummary{}, model.NewInternalError("Failed calculate balances")
 	}
+	balances = engine.ApplySettlementPayments(balances, settlementRows)
 	var net *money.Money
 	for _, b := range balances {
 		p := participantByID(participants, b.ParticipantID)

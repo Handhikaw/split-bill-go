@@ -32,6 +32,7 @@ func participantSvc(members map[int64]bool, activity *stubActivityService) servi
 		activitySvc,
 		nil,
 		nil,
+		nil,
 	)
 }
 

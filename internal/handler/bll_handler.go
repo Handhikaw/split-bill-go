@@ -63,7 +63,9 @@ func (h *BillHandler) CreateGroupBill(c *gin.Context) {
 func (h *BillHandler) GetSplitBill(c *gin.Context) {
 	publicID := c.Param("public_id")
 
-	res, err := h.billService.GetSplitBill(publicID)
+	viewerID, _ := middleware.AuthUserID(c)
+
+	res, err := h.billService.GetSplitBill(publicID, viewerID)
 	if err != nil {
 		_ = c.Error(err)
 		return
@@ -75,7 +77,9 @@ func (h *BillHandler) GetSplitBill(c *gin.Context) {
 func (h *BillHandler) GetGroupBill(c *gin.Context) {
 	publicID := c.Param("public_id")
 
-	res, err := h.billService.GetGroupBill(publicID)
+	viewerID, _ := middleware.AuthUserID(c)
+
+	res, err := h.billService.GetGroupBill(publicID, viewerID)
 	if err != nil {
 		_ = c.Error(err)
 		return

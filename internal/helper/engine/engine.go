@@ -283,3 +283,42 @@ func ToParticipantBalanceDTO(p ParticipantBalance) dto.ParticipantBalance {
 		NetBalance:    p.NetBalance.String(),
 	}
 }
+
+//
+// ===============================
+// APPLY SETTLEMENT PAYMENTS
+// ===============================
+//
+
+// ApplySettlementPayments mengurangi utang yang sudah dibayar.
+// from membayar to: net from naik, net to turun. Overpay boleh;
+// hasilnya bisa berbalik menjadi kredit (engine tetap konsisten).
+func ApplySettlementPayments(
+	balances []ParticipantBalance,
+	payments []entity.SettlementPayment,
+) []ParticipantBalance {
+	if len(balances) == 0 || len(payments) == 0 {
+		return balances
+	}
+
+	currency := balances[0].NetBalance.Currency
+	idx := make(map[int64]int, len(balances))
+	for i, b := range balances {
+		idx[b.ParticipantID] = i
+	}
+
+	for _, p := range payments {
+		if p.Amount <= 0 {
+			continue
+		}
+		amount := money.New(p.Amount, currency)
+		if i, ok := idx[p.FromParticipantID]; ok {
+			balances[i].NetBalance = balances[i].NetBalance.Add(amount)
+		}
+		if i, ok := idx[p.ToParticipantID]; ok {
+			balances[i].NetBalance = balances[i].NetBalance.Sub(amount)
+		}
+	}
+
+	return balances
+}
