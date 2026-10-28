@@ -28,6 +28,14 @@ func NewNotFound(msg string) *ApiError {
 	}
 }
 
+func NewUnauthorized(msg string) *ApiError {
+	return &ApiError{
+		Code:       "UNAUTHORIZED",
+		Message:    msg,
+		HttpStatus: http.StatusUnauthorized,
+	}
+}
+
 func NewNotImplemented(msg string) *ApiError {
 	return &ApiError{
 		Code:       "NOT_IMPLEMENTED",

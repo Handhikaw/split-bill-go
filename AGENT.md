@@ -61,6 +61,15 @@ POST /api/group-bills                  # OptionalAuth + auto-create owner partic
 GET  /api/group-bill/:public_id        # GetGroupBill (note: singular "group-bill")
 POST /api/split-bills/:public_id/join  # JoinSplitBill {name, user_id?}
 PUT  /api/payment/:public_id           # ProcessPayment {expense_id, participant_id, amount string, old_participant_id?} -> upsert (expense_id,paid_by); bila old_participant_id beda = pindah payer atomik (hapus lama + upsert baru), 404 bila payment lama tidak ada
+
+# Patungan (goal bill): target total + kontribusi bebas (uang sudah diterima).
+POST   /api/goal-bills                    # OptionalAuth, {title,currency,target_amount,description?,creator_name?} -> {public_id,owner_participant_id,...}
+GET    /api/goal-bills/:public_id         # bill + goal + participants + contributions + total_collected/remaining
+POST   /api/goal-bills/:public_id/join    # reuse JoinSplitBill {name,user_id?}
+POST   /api/goal-bills/:public_id/contributions      # {participant_id, amount string, note?}
+DELETE /api/goal-bills/:public_id/contributions/:id
+GET    /api/goal-bills/:public_id/activities
+
 POST /api/auth/anonymous               # header X-Anonymous-Id: UUID -> {access_token, user_id, role}
 POST /api/auth/google                  # stub 501 NOT_IMPLEMENTED (UserHandler.AuthGoogle)
 
@@ -81,7 +90,9 @@ DELETE /api/expense/:public_id/:expense_id/item/:item_id
 ## 7. Entity / Tabel
 | Entity | Tabel | Catatan |
 |---|---|---|
-| `Bill` | `bill` | `public_id unique`, `currency(3)`, `status`, `created_by(user)`, `expired_at` |
+| `Bill` | `bill` | `public_id unique`, `currency(3)`, `kind` (`split`/`group`/`goal`), `status`, `created_by(user)`, `expired_at` |
+| `GoalBill` | `goal_bill` | 1:1 `bill_id` (unique), `target_amount int64`, `description?` |
+| `Contribution` | `contribution` | `bill_id`, `participant_id`, `amount int64`, `note?`, `paid_at` — ledger uang sudah diterima |
 | `Expense` | `expense` | `bill_id`, `type` (`SPLIT_BILL`/grup), `amount/tax/discount/charge int64`, `category_id?`, `created_by(participant)` |
 | `ExpenseItem` | `expense_item` | `expense_id`, `name`, `quantity`, `price int64` |
 | `Participant` | `participant` | `bill_id`, `name`, `user_id?`, `is_owner` |
@@ -105,6 +116,8 @@ DELETE /api/expense/:public_id/:expense_id/item/:item_id
 ## 9. Aturan Bisnis Penting
 - Split Bill = 1 `Bill` + 1 `Expense{type:SPLIT_BILL}` (dibuat di `bill_service_impl.go:38-62`).
 - Group Bill free: `ExpiredAt = now+48h`, premium (`user.role==PREMIUM` case-insensitive): `nil` (kekal). Lihat `CreateGroupBill`.
+- Patungan (goal): `bill.kind='goal'` + 1 baris `goal_bill`; free `ExpiredAt = now+30d`, premium `nil`. Total terkumpul = `SUM(contribution.amount)` saat baca (tanpa kolom cache). Kontribusi = uang diterima (tanpa status pledge). Hapus peserta yang sudah punya kontribusi ditolak 400 (`participant_service_impl.go`).
+- DDL manual: `db/migrations/0001_patungan.up.sql` (wajib dijalankan sebelum deploy; tidak ada auto-migrate).
 - `AuthAnon`: wajib header `X-Anonymous-Id` UUID valid; cari/buat `User{role:ANONYMOUS}`; JWT HS256 `user_id, role`, exp 30 hari. `jwtSecret` di-inject dari `cfg.JWTSecret` via `router.RegisterRoutes(r, db, cfg)`.
 - Identitas create bill: `OptionalAuthMiddleware(cfg.JWTSecret)` di `POST /split-bills` & `POST /group-bills` — ada Bearer valid → context `auth_user_id`/`auth_role`, tanpa token → guest. Handler baca via `middleware.AuthUserID(c)` → service pakai langsung sebagai `bill.created_by`. Body `created_by` sudah **dihapus** dari `CreateSpiltBillRq`/`CreateGroupBillRq` (tidak ada lagi jalur spoofing).
 - Bedakan anon: lookup `users` by effective id → `role=="ANONYMOUS"` atau `anon_id!=""`. Anon/terdaftar/guest **semua** auto-create `participant{is_owner:true}` dalam 1 transaksi GORM dengan bill (+expense untuk split bill). Premium → `ExpiredAt=nil`, selain itu +48 jam.

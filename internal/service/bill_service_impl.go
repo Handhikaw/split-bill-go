@@ -20,6 +20,7 @@ type billServiceImpl struct {
 	repoExpense     repository.ExpenseRepository
 	repoParticipant repository.ParticipantRepository
 	repoPayment     repository.PaymentRepository
+	repoGoal        repository.GoalRepository
 	activityService ActivityService
 	db              *gorm.DB
 }
@@ -28,28 +29,20 @@ func NewBillService(repo repository.BillRepository,
 	repoExpense repository.ExpenseRepository,
 	repoParticipant repository.ParticipantRepository,
 	repoPayment repository.PaymentRepository,
+	repoGoal repository.GoalRepository,
 	activityService ActivityService,
 	db *gorm.DB) BillService {
 	return &billServiceImpl{repo: repo,
 		repoExpense:     repoExpense,
 		repoParticipant: repoParticipant,
 		repoPayment:     repoPayment,
+		repoGoal:        repoGoal,
 		activityService: activityService,
 		db:              db}
 }
 
 func (s *billServiceImpl) lookupUser(userID *int64) (entity.User, error) {
-	var user entity.User
-	if userID == nil {
-		return user, nil
-	}
-	if err := s.db.Select("id, role, username").Where("id = ?", *userID).First(&user).Error; err != nil {
-		if errors.Is(err, gorm.ErrRecordNotFound) {
-			return entity.User{}, model.NewNotFound("user not found")
-		}
-		return entity.User{}, model.NewInternalError("Database error")
-	}
-	return user, nil
+	return lookupUserByID(s.db, userID)
 }
 
 func resolveOwnerName(creatorName *string, username string) string {
@@ -88,6 +81,7 @@ func (s *billServiceImpl) CreateSplitBill(req dto.CreateSpiltBillRq, actorUserID
 		PublicID:  publicId,
 		Name:      req.Title,
 		Currency:  req.Currency,
+		Kind:      "split",
 		Status:    "ACTIVE",
 		CreatedBy: effectiveID,
 	}
@@ -139,6 +133,9 @@ func (s *billServiceImpl) GetSplitBill(publicID string) (*dto.GetSplitBillRs, er
 			return &dto.GetSplitBillRs{}, model.NewNotFound("Split bill not found")
 		}
 		return &dto.GetSplitBillRs{}, model.NewInternalError("Database error")
+	}
+	if bill.Kind == "goal" {
+		return &dto.GetSplitBillRs{}, model.NewNotFound("Split bill not found")
 	}
 
 	participants, err := s.repoParticipant.GetParticipants(bill.ID)
@@ -345,6 +342,7 @@ func (s *billServiceImpl) CreateGroupBill(req dto.CreateGroupBillRq, actorUserID
 		PublicID:  publicID,
 		Name:      req.Title,
 		Currency:  req.Currency,
+		Kind:      "group",
 		Status:    "ACTIVE",
 		CreatedBy: effectiveID,
 	}
@@ -397,6 +395,9 @@ func (s *billServiceImpl) GetGroupBill(publicID string) (dto.GetGroupBillRs, err
 			return dto.GetGroupBillRs{}, model.NewNotFound("Group bill not found")
 		}
 		return dto.GetGroupBillRs{}, model.NewInternalError("Database error")
+	}
+	if bill.Kind == "goal" {
+		return dto.GetGroupBillRs{}, model.NewNotFound("Group bill not found")
 	}
 
 	participants, err := s.repoParticipant.GetParticipants(bill.ID)
@@ -553,4 +554,176 @@ func (s *billServiceImpl) GetGroupBill(publicID string) (dto.GetGroupBillRs, err
 		Participants: balanceDTO,
 		Settlements:  settlements,
 	}, nil
+}
+
+// ListMyBills implements [BillService].
+// "Bill saya" = saya pembuatnya (created_by) ATAU saya pesertanya
+// (participant.user_id). Terakhir aktif dulu (activity terakhir,
+// fallback created_at). Limit <= 0 = default 20.
+func (s *billServiceImpl) ListMyBills(userID int64, limit int) ([]dto.MyBillItem, error) {
+	if limit <= 0 {
+		limit = 20
+	}
+	if limit > 50 {
+		limit = 50
+	}
+
+	var bills []entity.Bill
+	err := s.db.
+		Where("created_by = ? OR id IN (?)",
+			userID,
+			s.db.Table("participant").Select("bill_id").Where("user_id = ?", userID),
+		).
+		Order(gorm.Expr("COALESCE((SELECT MAX(created_at) FROM activity_logs WHERE bill_id = bill.id), created_at) DESC")).
+		Limit(limit).
+		Find(&bills).Error
+	if err != nil {
+		return nil, model.NewInternalError("Database error")
+	}
+
+	items := make([]dto.MyBillItem, 0, len(bills))
+	for _, bill := range bills {
+		kind, total, myNet, memberCount, updated, err := s.summarizeBillForUser(bill, userID)
+		if err != nil {
+			return nil, err
+		}
+		items = append(items, dto.MyBillItem{
+			PublicID:    bill.PublicID,
+			Kind:        kind,
+			Title:       bill.Name,
+			Currency:    bill.Currency,
+			TotalAmount: total,
+			Status:      bill.Status,
+			MyNet:       myNet,
+			MemberCount: memberCount,
+			UpdatedAt:   updated,
+		})
+	}
+	return items, nil
+}
+
+func (s *billServiceImpl) summarizeBillForUser(
+	bill entity.Bill, userID int64,
+) (kind, total string, myNet *string, memberCount int, updated time.Time, err error) {
+	kind = bill.Kind
+	if kind == "" {
+		kind = "group"
+	}
+
+	participants, err := s.repoParticipant.GetParticipants(bill.ID)
+	if err != nil {
+		return "", "", nil, 0, time.Time{}, model.NewInternalError("Database error")
+	}
+	memberCount = len(participants)
+
+	updated = bill.CreatedAt
+	var lastAct *time.Time
+	if err := s.db.Table("activity_logs").
+		Select("MAX(created_at)").Where("bill_id = ?", bill.ID).
+		Scan(&lastAct).Error; err == nil && lastAct != nil {
+		updated = *lastAct
+	}
+
+	expenses, err := s.repoExpense.FindExpenseByBillID(bill.ID)
+	if err != nil {
+		return "", "", nil, 0, time.Time{}, model.NewInternalError("Database error")
+	}
+
+	// Data lama (sebelum kolom kind) tetap dikenali sebagai split.
+	if kind == "group" {
+		for _, exp := range expenses {
+			if exp.Type == "SPLIT_BILL" {
+				kind = "split"
+				break
+			}
+		}
+	}
+
+	// Patungan tidak punya expense: total = target, net = null (bukan utang).
+	if kind == "goal" {
+		goal, err := s.repoGoal.GetGoalByBillID(bill.ID)
+		if err != nil {
+			if errors.Is(err, gorm.ErrRecordNotFound) {
+				return "", "", nil, 0, time.Time{}, model.NewNotFound("goal bill not found")
+			}
+			return "", "", nil, 0, time.Time{}, model.NewInternalError("Database error")
+		}
+		total = money.New(goal.TargetAmount, bill.Currency).String()
+		return kind, total, nil, memberCount, updated, nil
+	}
+
+	expenseIDs := make([]int64, 0, len(expenses))
+	for _, exp := range expenses {
+		expenseIDs = append(expenseIDs, exp.ID)
+	}
+
+	items := []entity.ExpenseItem{}
+	itemParts := []entity.ExpenseItemParticipant{}
+	if len(expenseIDs) > 0 {
+		items, err = s.repoExpense.GetItemsByExpenseIDs(expenseIDs)
+		if err != nil {
+			return "", "", nil, 0, time.Time{}, model.NewInternalError("Database error")
+		}
+		itemIDs := make([]int64, 0, len(items))
+		for _, item := range items {
+			itemIDs = append(itemIDs, item.ID)
+		}
+		if len(itemIDs) > 0 {
+			itemParts, err = s.repoExpense.GetItemParticipantsByItemIDs(itemIDs)
+			if err != nil {
+				return "", "", nil, 0, time.Time{}, model.NewInternalError("Database error")
+			}
+		}
+	}
+
+	payments, err := s.repoPayment.GetPaymentsByBillID(bill.ID)
+	if err != nil {
+		return "", "", nil, 0, time.Time{}, model.NewInternalError("Database error")
+	}
+
+	var expenseParts []entity.ExpenseParticipant
+	if len(expenseIDs) > 0 {
+		expenseParts, err = s.repoExpense.GetExpenseParticipantsByExpenseIDs(expenseIDs)
+		if err != nil {
+			return "", "", nil, 0, time.Time{}, model.NewInternalError("Database error")
+		}
+	}
+
+	total = money.New(s.CalculateTotalAmount(expenses, items), bill.Currency).String()
+
+	// Net saya = gabungan semua baris peserta milik user ini.
+	balances, err := engine.CalculateBalances(participants, expenses, items, itemParts, expenseParts, payments, bill.Currency)
+	if err != nil {
+		return "", "", nil, 0, time.Time{}, model.NewInternalError("Failed calculate balances")
+	}
+	var net *money.Money
+	for _, b := range balances {
+		p := participantByID(participants, b.ParticipantID)
+		if p == nil || p.UserID == nil || *p.UserID != userID {
+			continue
+		}
+		sum := b.NetBalance
+		if net == nil {
+			n := sum
+			net = &n
+		} else {
+			n := net.Add(sum)
+			net = &n
+		}
+	}
+	if net != nil {
+		str := net.String()
+		myNet = &str
+	}
+
+	return kind, total, myNet, memberCount, updated, nil
+}
+
+func participantByID(participants []entity.Participant, id int64) *entity.Participant {
+	for i := range participants {
+		if participants[i].ID == id {
+			return &participants[i]
+		}
+	}
+	return nil
 }

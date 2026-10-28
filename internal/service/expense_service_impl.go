@@ -418,8 +418,70 @@ func (s *expenseServiceImpl) CreateExpenseItem(publicID string, expenseID int64,
 		return dto.CreateExpenseItemRs{}, err
 	}
 
+	// Item boleh tanpa peserta (belum assign): share dibuat saat
+	// peserta diisi menyusul via PATCH. Tanpa guard ini SplitRandom(0) panic.
 	if len(req.Participants) == 0 {
-		return dto.CreateExpenseItemRs{}, model.NewBadRequest("participants is required")
+		currency, err := s.repo.GetCurrencyByExpenseID(expenseID)
+		if err != nil {
+			if errors.Is(err, gorm.ErrRecordNotFound) {
+				return dto.CreateExpenseItemRs{}, model.NewNotFound("Expense Id not found")
+			}
+			return dto.CreateExpenseItemRs{}, model.NewInternalError("Database error")
+		}
+
+		price, err := money.FromString(req.Price, currency)
+		if err != nil {
+			return dto.CreateExpenseItemRs{}, err
+		}
+
+		var item entity.ExpenseItem
+		err = s.db.Transaction(func(tx *gorm.DB) error {
+			expense, err := s.repo.FindExpenseByID(tx, expenseID)
+			if err != nil {
+				if errors.Is(err, gorm.ErrRecordNotFound) {
+					return model.NewNotFound("Expense not found")
+				}
+				return model.NewInternalError("Database error")
+			}
+			if err := s.validateExpenseBelongsToBill(expense, bill.ID); err != nil {
+				return err
+			}
+
+			item = entity.ExpenseItem{
+				ExpenseID: expenseID,
+				Name:      req.Name,
+				Quantity:  req.Quantity,
+				Price:     price.Amount,
+			}
+			if err := s.repo.CreateItem(tx, &item); err != nil {
+				return err
+			}
+			if err := s.SyncExpenseTotal(tx, expenseID); err != nil {
+				return err
+			}
+
+			s.activityService.Log(entity.ActivityLog{
+				BillID:        expense.BillID,
+				ParticipantID: actor,
+				ActionType:    "CREATE_EXPENSE_ITEM",
+				TargetName:    &item.Name,
+				Amount:        &price.Amount,
+			})
+
+			return nil
+		})
+		if err != nil {
+			return dto.CreateExpenseItemRs{}, err
+		}
+
+		return dto.CreateExpenseItemRs{
+			ID:           item.ID,
+			Name:         item.Name,
+			Price:        price.String(),
+			Quantity:     item.Quantity,
+			Total:        price.Multiply(int64(req.Quantity)).String(),
+			Participants: []int64{},
+		}, nil
 	}
 
 	currency, err := s.repo.GetCurrencyByExpenseID(expenseID)

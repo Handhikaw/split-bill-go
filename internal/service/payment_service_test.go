@@ -39,6 +39,7 @@ func (s *stubParticipantRepo) Upsert(participant *entity.Participant) (int64, er
 func (s *stubParticipantRepo) FindByID(id int64) (*entity.Participant, error) {
 	return nil, gorm.ErrRecordNotFound
 }
+func (s *stubParticipantRepo) SetUserID(id int64, userID *int64) error { return nil }
 func (s *stubParticipantRepo) ExistsByIDAndBillID(participantID int64, billID int64) (bool, error) {
 	return s.members[participantID], nil
 }

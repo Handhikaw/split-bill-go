@@ -10,4 +10,6 @@ type BillService interface {
 	JoinSplitBill(publicID string, req dto.JoinSplitBillRq) error
 	CreateGroupBill(req dto.CreateGroupBillRq, actorUserID *int64) (dto.CreateGroupBillRs, error)
 	GetGroupBill(publicID string) (dto.GetGroupBillRs, error)
+	// ListMyBills: bill yang saya buat ATAU saya ikuti, terbaru dulu.
+	ListMyBills(userID int64, limit int) ([]dto.MyBillItem, error)
 }

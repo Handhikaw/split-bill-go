@@ -33,6 +33,14 @@ func (p *participantRepositoryImpl) FindByID(id int64) (*entity.Participant, err
 	return &participant, nil
 }
 
+// SetUserID implements [ParticipantRepository].
+func (p *participantRepositoryImpl) SetUserID(id int64, userID *int64) error {
+	if userID == nil {
+		return nil
+	}
+	return p.db.Model(&entity.Participant{}).Where("id = ?", id).Update("user_id", *userID).Error
+}
+
 func (p *participantRepositoryImpl) ExistsByIDAndBillID(participantID int64, billID int64) (bool, error) {
 	var count int64
 	err := p.db.Model(&entity.Participant{}).

@@ -20,13 +20,15 @@ func RegisterRoutes(r *gin.Engine, db *gorm.DB, cfg *config.Config) {
 	paymentRepo := repository.NewPaymentRepository(db)
 	activityRepo := repository.NewActivityRepository(db)
 	userRepo := repository.NewUserRepository(db)
+	goalRepo := repository.NewGoalRepository(db)
 
 	activityService := service.NewActivityService(activityRepo, billRepo, participantRepo)
-	billService := service.NewBillService(billRepo, expenseRepo, participantRepo, paymentRepo, activityService, db)
+	billService := service.NewBillService(billRepo, expenseRepo, participantRepo, paymentRepo, goalRepo, activityService, db)
 	expenseService := service.NewExpenseService(expenseRepo, billRepo, participantRepo, db, activityService)
-	participantService := service.NewParticipantService(participantRepo, billRepo, expenseService, activityService, db)
+	participantService := service.NewParticipantService(participantRepo, billRepo, expenseService, activityService, goalRepo, db)
 	paymentService := service.NewPaymentService(paymentRepo, billRepo, participantRepo)
 	userService := service.NewUserService(userRepo, cfg.JWTSecret)
+	goalService := service.NewGoalService(goalRepo, billRepo, participantRepo, activityService, db)
 
 	billHandler := handler.NewBillHandler(billService)
 	activityHandler := handler.NewActivityHandler(activityService)
@@ -34,6 +36,7 @@ func RegisterRoutes(r *gin.Engine, db *gorm.DB, cfg *config.Config) {
 	expenseHandler := handler.NewExpenseHandler(expenseService)
 	paymentHandler := handler.NewPaymentHandler(paymentService)
 	userHandler := handler.NewUserHandler(userService)
+	goalHandler := handler.NewGoalHandler(goalService)
 
 	optionalAuth := middleware.OptionalAuthMiddleware(cfg.JWTSecret)
 
@@ -50,8 +53,19 @@ func RegisterRoutes(r *gin.Engine, db *gorm.DB, cfg *config.Config) {
 		api.GET("/group-bill/:public_id/activities", activityHandler.GetActivities)
 		api.GET("/split-bills/:public_id/activities", activityHandler.GetActivities)
 
+		// Patungan (goal bill): kontribusi bebas, tanpa expense.
+		api.POST("/goal-bills", optionalAuth, goalHandler.CreateGoalBill)
+		api.GET("/goal-bills/:public_id", goalHandler.GetGoalBill)
+		api.POST("/goal-bills/:public_id/join", billHandler.JoinSplitBill)
+		api.GET("/goal-bills/:public_id/activities", activityHandler.GetActivities)
+		api.POST("/goal-bills/:public_id/contributions", middleware.ParticipantMiddleware(), goalHandler.AddContribution)
+		api.DELETE("/goal-bills/:public_id/contributions/:id", middleware.ParticipantMiddleware(), goalHandler.DeleteContribution)
+
 		api.POST("/auth/anonymous", userHandler.AuthAnon)
 		api.POST("/auth/google", userHandler.AuthGoogle)
+
+		apiKeyAuth := middleware.ApiKeyAuthMiddleware(cfg.JWTSecret)
+		api.GET("/me/bills", apiKeyAuth, billHandler.GetMyBills)
 
 		participant := api.Group("/participant")
 		participant.Use(middleware.ParticipantMiddleware())

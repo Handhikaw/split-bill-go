@@ -2,6 +2,7 @@ package handler
 
 import (
 	"net/http"
+	"strconv"
 
 	"github.com/gin-gonic/gin"
 	"github.com/harkandavez/split-bill-go/internal/middleware"
@@ -100,4 +101,32 @@ func (h *BillHandler) JoinSplitBill(c *gin.Context) {
 	}
 
 	c.JSON(http.StatusOK, model.Success(nil))
+}
+
+// GetMyBills mengembalikan bill milik user (pembuat ATAU peserta).
+// Butuh identitas dari ApiKeyAuthMiddleware; tanpa itu -> 401.
+func (h *BillHandler) GetMyBills(c *gin.Context) {
+	userID, ok := middleware.AuthUserID(c)
+	if !ok {
+		_ = c.Error(model.NewUnauthorized("login dulu"))
+		return
+	}
+
+	limit := 20
+	if raw := c.Query("limit"); raw != "" {
+		if n, err := strconv.Atoi(raw); err == nil && n > 0 {
+			if n > 50 {
+				n = 50
+			}
+			limit = n
+		}
+	}
+
+	res, err := h.billService.ListMyBills(*userID, limit)
+	if err != nil {
+		_ = c.Error(err)
+		return
+	}
+
+	c.JSON(http.StatusOK, model.Success(res))
 }

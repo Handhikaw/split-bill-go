@@ -13,6 +13,7 @@ import (
 type participantServiceImpl struct {
 	repo            repository.ParticipantRepository
 	repoBill        repository.BillRepository
+	repoGoal        repository.GoalRepository
 	expenseService  ExpenseService
 	activityService ActivityService
 	db              *gorm.DB
@@ -23,11 +24,13 @@ func NewParticipantService(
 	repoBill repository.BillRepository,
 	expenseService ExpenseService,
 	activityService ActivityService,
+	repoGoal repository.GoalRepository,
 	db *gorm.DB,
 ) ParticipantService {
 	return &participantServiceImpl{
 		repo:            repo,
 		repoBill:        repoBill,
+		repoGoal:        repoGoal,
 		expenseService:  expenseService,
 		activityService: activityService,
 		db:              db,
@@ -63,6 +66,36 @@ func (s *participantServiceImpl) UpsertParticipant(publicID string, actionPartic
 
 	if err := s.validateActor(bill.ID, actionParticipant); err != nil {
 		return dto.ParticipantRs{}, err
+	}
+
+	// Klaim: id terisi = tautkan baris peserta existing ke user,
+	// tanpa mengubah nama/status. Return nama existing.
+	if req.ID != nil {
+		existing, err := s.repo.FindByID(*req.ID)
+		if err != nil {
+			if errors.Is(err, gorm.ErrRecordNotFound) {
+				return dto.ParticipantRs{}, model.NewNotFound("Participant not found")
+			}
+			return dto.ParticipantRs{}, model.NewInternalError("Database error")
+		}
+		if existing.BillID != bill.ID {
+			return dto.ParticipantRs{}, model.NewNotFound("Participant not found in this bill")
+		}
+		if err := s.repo.SetUserID(existing.ID, req.UserID); err != nil {
+			return dto.ParticipantRs{}, model.NewInternalError("Database error")
+		}
+
+		s.activityService.Log(entity.ActivityLog{
+			BillID:        bill.ID,
+			ParticipantID: actionParticipant,
+			ActionType:    "CLAIM_PARTICIPANT",
+			TargetName:    &existing.Name,
+		})
+
+		return dto.ParticipantRs{
+			ID:   existing.ID,
+			Name: existing.Name,
+		}, nil
 	}
 
 	isOwner := false
@@ -125,6 +158,15 @@ func (s *participantServiceImpl) RemoveParticipant(publicID string, id int64, ac
 		}
 		if participant.BillID != bill.ID {
 			return model.NewNotFound("Participant not found in this bill")
+		}
+
+		// Ledger patungan tidak boleh hilang diam-diam saat peserta dihapus.
+		contributions, err := s.repoGoal.CountContributionsByParticipantID(id)
+		if err != nil {
+			return model.NewInternalError("Failed read participant contributions")
+		}
+		if contributions > 0 {
+			return model.NewBadRequest("peserta sudah punya kontribusi; hapus kontribusinya dulu")
 		}
 
 		expenseIDs, err := s.repo.GetAffectedExpenseIDsByParticipantID(tx, id)

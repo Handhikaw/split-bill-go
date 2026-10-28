@@ -8,6 +8,9 @@ import (
 type ParticipantRepository interface {
 	Upsert(participant *entity.Participant) (int64, error)
 	FindByID(id int64) (*entity.Participant, error)
+	// SetUserID menautkan baris peserta existing ke user (klaim),
+	// tanpa mengubah nama/status. No-op bila userID nil.
+	SetUserID(id int64, userID *int64) error
 	ExistsByIDAndBillID(participantID int64, billID int64) (bool, error)
 	Delete(participant *entity.Participant) error
 	GetAffectedExpenseIDsByParticipantID(tx *gorm.DB, participantID int64) ([]int64, error)
