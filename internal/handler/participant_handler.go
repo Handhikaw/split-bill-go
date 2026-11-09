@@ -5,6 +5,7 @@ import (
 	"strconv"
 
 	"github.com/gin-gonic/gin"
+	"github.com/harkandavez/split-bill-go/internal/middleware"
 	"github.com/harkandavez/split-bill-go/internal/model"
 	"github.com/harkandavez/split-bill-go/internal/model/dto"
 	"github.com/harkandavez/split-bill-go/internal/service"
@@ -28,7 +29,8 @@ func (h *ParticipantHandler) Participant(c *gin.Context) {
 		return
 	}
 
-	res, err := h.participantService.UpsertParticipant(publicID, participantID, req)
+	authUserID, _ := middleware.AuthUserID(c)
+	res, err := h.participantService.UpsertParticipant(publicID, participantID, authUserID, req)
 	if err != nil {
 		_ = c.Error(err)
 		return

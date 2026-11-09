@@ -9,10 +9,11 @@ import (
 )
 
 type Config struct {
-	AppName   string
-	AppPort   string
-	AppEnv    string
-	JWTSecret string
+	AppName        string
+	AppPort        string
+	AppEnv         string
+	JWTSecret      string
+	GoogleClientID string
 
 	DBHost     string
 	DBPort     string
@@ -28,10 +29,11 @@ func Load() *Config {
 	}
 
 	return &Config{
-		AppName:   os.Getenv("APP_NAME"),
-		AppPort:   os.Getenv("APP_PORT"),
-		AppEnv:    os.Getenv("APP_ENV"),
-		JWTSecret: os.Getenv("JWT_SECRET"),
+		AppName:        os.Getenv("APP_NAME"),
+		AppPort:        os.Getenv("APP_PORT"),
+		AppEnv:         os.Getenv("APP_ENV"),
+		JWTSecret:      os.Getenv("JWT_SECRET"),
+		GoogleClientID: os.Getenv("GOOGLE_CLIENT_ID"),
 
 		DBHost:     os.Getenv("DB_HOST"),
 		DBPort:     os.Getenv("DB_PORT"),

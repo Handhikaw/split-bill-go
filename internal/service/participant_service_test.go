@@ -50,7 +50,7 @@ func TestRemoveParticipant_InvalidActor(t *testing.T) {
 func TestUpsertParticipant_InvalidActor(t *testing.T) {
 	svc := participantSvc(map[int64]bool{23: true}, nil)
 
-	_, err := svc.UpsertParticipant("bill8", 99, dto.ParticipantRq{Name: "X"})
+	_, err := svc.UpsertParticipant("bill8", 99, nil, dto.ParticipantRq{Name: "X"})
 	if err == nil || err.Error() != "invalid participant" {
 		t.Fatalf("expected invalid participant error, got %v", err)
 	}
@@ -61,7 +61,7 @@ func TestUpsertParticipant_NilIsOwner(t *testing.T) {
 	activity := &stubActivityService{}
 	svc := participantSvc(map[int64]bool{23: true}, activity)
 
-	rs, err := svc.UpsertParticipant("bill8", 23, dto.ParticipantRq{Name: "Budi"})
+	rs, err := svc.UpsertParticipant("bill8", 23, nil, dto.ParticipantRq{Name: "Budi"})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}

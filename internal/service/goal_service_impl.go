@@ -385,6 +385,9 @@ func (s *goalServiceImpl) DeleteContribution(publicID string, contributionID int
 	if _, err := billAccessOrError(s.db, bill); err != nil {
 		return err
 	}
+	if err := requireOwnerParticipant(s.repoParticipant, bill.ID, actorParticipantID); err != nil {
+		return err
+	}
 
 	if err := s.repoGoal.DeleteContribution(row); err != nil {
 		return model.NewInternalError("failed to delete contribution")

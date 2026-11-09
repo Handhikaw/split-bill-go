@@ -57,7 +57,7 @@ func (s *participantServiceImpl) validateActor(billID int64, actionParticipant i
 	return nil
 }
 
-func (s *participantServiceImpl) UpsertParticipant(publicID string, actionParticipant int64, req dto.ParticipantRq) (dto.ParticipantRs, error) {
+func (s *participantServiceImpl) UpsertParticipant(publicID string, actionParticipant int64, authUserID *int64, req dto.ParticipantRq) (dto.ParticipantRs, error) {
 
 	bill, err := s.repoBill.GetBillByPublicID(publicID)
 	if err != nil {
@@ -92,7 +92,18 @@ func (s *participantServiceImpl) UpsertParticipant(publicID string, actionPartic
 		if existing.BillID != bill.ID {
 			return dto.ParticipantRs{}, model.NewNotFound("Participant not found in this bill")
 		}
-		if err := s.repo.SetUserID(existing.ID, req.UserID); err != nil {
+
+		// Baris yang sudah tertaut hanya boleh diklaim user yang sama.
+		if existing.UserID != nil {
+			if authUserID == nil || *authUserID != *existing.UserID {
+				return dto.ParticipantRs{}, model.NewBadRequest("peserta ini sudah ditautkan ke akun lain; login dengan akun tersebut")
+			}
+		}
+		effectiveUserID := authUserID
+		if effectiveUserID == nil {
+			effectiveUserID = req.UserID
+		}
+		if err := s.repo.SetUserID(existing.ID, effectiveUserID); err != nil {
 			return dto.ParticipantRs{}, model.NewInternalError("Database error")
 		}
 
@@ -125,10 +136,15 @@ func (s *participantServiceImpl) UpsertParticipant(publicID string, actionPartic
 		}
 	}
 
+	participantUserID := req.UserID
+	if authUserID != nil {
+		participantUserID = authUserID
+	}
+
 	participant := &entity.Participant{
 		BillID:  bill.ID,
 		Name:    req.Name,
-		UserID:  req.UserID,
+		UserID:  participantUserID,
 		IsOwner: isOwner,
 	}
 
@@ -171,6 +187,20 @@ func (s *participantServiceImpl) RemoveParticipant(publicID string, id int64, ac
 		return err
 	}
 
+	if actionParticipant <= 0 {
+		return model.NewBadRequest("klaim sebagai peserta dulu")
+	}
+	actor, err := s.repo.FindByID(actionParticipant)
+	if err != nil {
+		return model.NewBadRequest("invalid participant")
+	}
+	if actor.BillID != bill.ID {
+		return model.NewBadRequest("invalid participant")
+	}
+	if id != actionParticipant && !actor.IsOwner {
+		return model.NewBadRequest("hanya owner bill yang bisa menghapus peserta lain")
+	}
+
 	// Self-delete (keluar grup): actor ikut terhapus sehingga tidak bisa
 	// dipakai sebagai FK activity log -> log tanpa actor.
 	logActor := actionParticipant
@@ -188,6 +218,9 @@ func (s *participantServiceImpl) RemoveParticipant(publicID string, id int64, ac
 		}
 		if participant.BillID != bill.ID {
 			return model.NewNotFound("Participant not found in this bill")
+		}
+		if participant.IsOwner && participant.ID == actionParticipant {
+			return model.NewBadRequest("owner tidak bisa keluar dari bill")
 		}
 
 		// Ledger patungan tidak boleh hilang diam-diam saat peserta dihapus.

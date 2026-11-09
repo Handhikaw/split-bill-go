@@ -200,8 +200,20 @@ func (s *settlementServiceImpl) Delete(
 		return access.ReadOnlyError()
 	}
 
-	actor, err := s.loadActor(bill, actorParticipantID, access)
+	if actorParticipantID <= 0 {
+		return model.NewBadRequest("klaim sebagai peserta dulu")
+	}
+	actor, err := s.repoParticipant.FindByID(actorParticipantID)
 	if err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return model.NewBadRequest("klaim sebagai peserta dulu")
+		}
+		return model.NewInternalError("Database error")
+	}
+	if actor.BillID != bill.ID {
+		return model.NewBadRequest("invalid participant")
+	}
+	if err := requireOwnerParticipant(s.repoParticipant, bill.ID, actor.ID); err != nil {
 		return err
 	}
 
@@ -211,10 +223,6 @@ func (s *settlementServiceImpl) Delete(
 			return model.NewNotFound("Pelunasan tidak ditemukan")
 		}
 		return model.NewInternalError("Database error")
-	}
-
-	if actor.ID != row.FromParticipantID && actor.ID != row.ToParticipantID && !actor.IsOwner {
-		return model.NewBadRequest("hanya pihak terkait atau owner yang bisa menghapus pelunasan")
 	}
 
 	if err := s.repoSettlement.Delete(row); err != nil {

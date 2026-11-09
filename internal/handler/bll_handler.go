@@ -98,6 +98,11 @@ func (h *BillHandler) JoinSplitBill(c *gin.Context) {
 		return
 	}
 
+	// Identitas server-side menang atas body user_id.
+	if uid, ok := middleware.AuthUserID(c); ok {
+		req.UserID = uid
+	}
+
 	err := h.billService.JoinSplitBill(publicID, req)
 	if err != nil {
 		_ = c.Error(err)

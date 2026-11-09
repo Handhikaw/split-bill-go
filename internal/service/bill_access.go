@@ -7,6 +7,7 @@ import (
 
 	"github.com/harkandavez/split-bill-go/internal/model"
 	"github.com/harkandavez/split-bill-go/internal/model/entity"
+	"github.com/harkandavez/split-bill-go/internal/repository"
 	"gorm.io/gorm"
 )
 
@@ -104,4 +105,25 @@ func (a BillAccess) ParticipantLimitError() error {
 
 func (a BillAccess) ExpenseLimitError() error {
 	return model.NewBadRequest("batas transaksi Free (15) tercapai; upgrade ke Premium")
+}
+
+// requireOwnerParticipant menolak aksi destruktif dari non-owner.
+func requireOwnerParticipant(repo repository.ParticipantRepository, billID, actorID int64) error {
+	if actorID <= 0 {
+		return model.NewBadRequest("klaim sebagai peserta dulu")
+	}
+	actor, err := repo.FindByID(actorID)
+	if err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return model.NewBadRequest("klaim sebagai peserta dulu")
+		}
+		return model.NewInternalError("Database error")
+	}
+	if actor.BillID != billID {
+		return model.NewBadRequest("invalid participant")
+	}
+	if !actor.IsOwner {
+		return model.NewBadRequest("hanya owner bill yang bisa melakukan aksi ini")
+	}
+	return nil
 }

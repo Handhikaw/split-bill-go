@@ -13,6 +13,7 @@ import (
 type ParticipantBalance struct {
 	ParticipantID int64
 	Name          string
+	IsOwner       bool
 	TotalPaid     money.Money
 	TotalOwed     money.Money
 	NetBalance    money.Money
@@ -166,6 +167,7 @@ func CalculateBalances(
 		results = append(results, ParticipantBalance{
 			ParticipantID: p.ID,
 			Name:          p.Name,
+			IsOwner:       p.IsOwner,
 			TotalPaid:     calc.paid,
 			TotalOwed:     calc.owed,
 			NetBalance:    net,
@@ -278,6 +280,7 @@ func ToParticipantBalanceDTO(p ParticipantBalance) dto.ParticipantBalance {
 	return dto.ParticipantBalance{
 		ParticipantID: p.ParticipantID,
 		Name:          p.Name,
+		IsOwner:       p.IsOwner,
 		TotalPaid:     p.TotalPaid.String(),
 		TotalOwed:     p.TotalOwed.String(),
 		NetBalance:    p.NetBalance.String(),

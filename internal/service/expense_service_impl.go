@@ -394,6 +394,9 @@ func (s *expenseServiceImpl) DeleteExpense(publicID string, expenseID int64, par
 	if err != nil {
 		return err
 	}
+	if err := requireOwnerParticipant(s.repoParticipant, bill.ID, actor); err != nil {
+		return err
+	}
 
 	return s.db.Transaction(func(tx *gorm.DB) error {
 		expense, err := s.repo.FindExpenseByID(tx, expenseID)
@@ -799,6 +802,9 @@ func (s *expenseServiceImpl) DeleteExpenseItem(publicID string, expenseID int64,
 
 	actor, err := s.resolveActor(bill.ID, participantID)
 	if err != nil {
+		return err
+	}
+	if err := requireOwnerParticipant(s.repoParticipant, bill.ID, actor); err != nil {
 		return err
 	}
 

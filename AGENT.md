@@ -22,7 +22,7 @@ go run ./cmd/api/main.go
 go build ./... && ./split-bill-go
 ```
 - Config: `internal/config/config.go` -> `Load()` baca `.env` (fallback ke env sistem).
-- Env yang dipakai: `APP_NAME, APP_PORT, APP_ENV, JWT_SECRET, DB_HOST, DB_PORT, DB_USER, DB_PASSWORD, DB_NAME`
+- Env yang dipakai: `APP_NAME, APP_PORT, APP_ENV, JWT_SECRET, GOOGLE_CLIENT_ID, DB_HOST, DB_PORT, DB_USER, DB_PASSWORD, DB_NAME`
 - DSN: `internal/config/database.go` (`InitDB`, Postgres, tanpa `sslmode`).
 - **Gotcha:** `main.go:27` hardcode `r.Run(":8080")`, `cfg.AppPort` hanya untuk log. `gin.ReleaseMode` hanya jika `APP_ENV=production`.
 
@@ -74,7 +74,8 @@ DELETE /api/goal-bills/:public_id/contributions/:id
 GET    /api/goal-bills/:public_id/activities
 
 POST /api/auth/anonymous               # header X-Anonymous-Id: UUID -> {access_token, user_id, role}
-POST /api/auth/google                  # stub 501 NOT_IMPLEMENTED (UserHandler.AuthGoogle)
+POST /api/auth/google                  # X-API-Key opsional + {id_token} -> {access_token, user_id, name,email,image,role,provider,is_premium}
+GET  /api/me                           # X-API-Key -> profil user
 
 # butuh header X-Participant-ID (optional, dimasukkan ke ctx "participant_id"):
 PUT    /api/participant/:public_id
@@ -125,9 +126,11 @@ DELETE /api/expense/:public_id/:expense_id/item/:item_id
 - **Free/Premium guardrails** (`internal/service/bill_access.go`): premium = role `PREMIUM` milik `bill.created_by` (dinamis, login saja bukan premium). Group free max 5 peserta & 15 expense; goal free max 5 peserta; split tanpa gate. Expired/closed → read-only untuk Free. `GetGroupBillRs`/`GetSplitBillRs` mengirim `plan`, `read_only`, `viewer_is_premium`, `limits`, `usage`. Guard ada di expense/participant/payment/join/goal service; pesan error 400 dipakai frontend (apiFetch parse envelope).
 - `ListMyBills`: goal mengirim `target_amount` + `collected_amount` (string), `my_net=null`; kind dari `bill.kind`.
 - **Kontrak tulis uang**: frontend wajib mengirim string major sesuai scale (`toBackendMajor`), bukan minor-int. `money.FromString` membaca major ("10.50" USD = 1050). Audit data USD/EUR lama ada di `db/audits/`.
-- DDL manual: `db/migrations/0001_patungan.up.sql` (wajib dijalankan sebelum deploy; tidak ada auto-migrate).
+- DDL manual: `db/migrations/0001_patungan.up.sql`, `0002_settlement_payment.up.sql`, `0003_auth_backfill.up.sql` (wajib dijalankan sebelum deploy; tidak ada auto-migrate).
 - `AuthAnon`: wajib header `X-Anonymous-Id` UUID valid; cari/buat `User{role:ANONYMOUS}`; JWT HS256 `user_id, role`, exp 30 hari. `jwtSecret` di-inject dari `cfg.JWTSecret` via `router.RegisterRoutes(r, db, cfg)`.
-- Identitas create bill: `OptionalAuthMiddleware(cfg.JWTSecret)` di `POST /split-bills` & `POST /group-bills` — ada Bearer valid → context `auth_user_id`/`auth_role`, tanpa token → guest. Handler baca via `middleware.AuthUserID(c)` → service pakai langsung sebagai `bill.created_by`. Body `created_by` sudah **dihapus** dari `CreateSpiltBillRq`/`CreateGroupBillRq` (tidak ada lagi jalur spoofing).
+- Identitas create bill: route create memakai `ApiKeyAuthMiddleware` (`X-API-Key`) -> context `auth_user_id`/`auth_role`. `bill.created_by` terisi dengan benar; guest (tanpa key) tetap boleh. Backfill `0003_auth_backfill` memperbaiki data lama.
+- **Auth Google**: `POST /auth/google` verifikasi ID token (aud=`GOOGLE_CLIENT_ID`, iss Google, email_verified) pakai JWKS manual (`google_verifier.go`). User anon di device di-upgrade (bukan merge) bila akun Google belum ada; akun Google existing dipakai apa adanya. Role Google baru = `USER` (bukan Premium).
+- **Ownership**: claim baris peserta yang sudah `user_id` hanya boleh user yang sama. Aksi destruktif owner-only: delete expense/item/pelunasan/kontribusi, hapus peserta (owner, atau self-leave), edit goal. Tambah/edit expense & kontribusi tetap kolaboratif.
 - Bedakan anon: lookup `users` by effective id → `role=="ANONYMOUS"` atau `anon_id!=""`. Anon/terdaftar/guest **semua** auto-create `participant{is_owner:true}` dalam 1 transaksi GORM dengan bill (+expense untuk split bill). Premium → `ExpiredAt=nil`, selain itu +48 jam.
 - Nama owner: `req.creator_name` (trim, max 100) → `users.username` → `"Owner"` (`resolveOwnerName`). Anon bawaan `username` kosong jadi fallback `"Owner"`.
 - Amount di DTO selalu **string** (`"25000"`, `"10.00"` sesuai currency) — parse via `money.FromString`, format via `Money.String()`.
@@ -137,7 +140,7 @@ DELETE /api/expense/:public_id/:expense_id/item/:item_id
 - [fixed] `GetSplitBill` panic `expenses[0]` -> sekarang cek `len(expenses)==0` + handle semua repo/engine error; `Tax/Charge/Discount` sudah baca field masing-masing; slice kosong dikembalikan sebagai `[]` bukan `null`.
 - [fixed] `main.go` hardcode `:8080` -> sekarang pakai `cfg.AppPort` (fallback `8080`).
 - [fixed] `NewUserService(userRepo, "")` -> sekarang inject `cfg.JWTSecret`; fallback `os.Getenv` dihapus, error jelas kalau kosong.
-- [fixed] `POST /api/auth/google` tanpa handler (bikin gin panic saat start) -> sekarang ada stub `UserHandler.AuthGoogle` return `501 NOT_IMPLEMENTED` (`model.NewNotImplemented`).
+- [fixed] `POST /api/auth/google` sekarang aktif (verifikasi Google ID token via JWKS, upgrade user anon, JWT aplikasi).
 - [fixed] `fmt.Println` debug di `engine.go` & `auth_middleware.go` -> dihapus.
 - [fixed] `repository/group_bill_repository.go` dead code (interface tak terpakai) -> dihapus.
 - [fixed] `entity/payement.go` typo -> rename ke `entity/payment.go`.
