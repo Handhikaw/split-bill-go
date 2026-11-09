@@ -14,7 +14,10 @@ type MyBillItem struct {
 	MyNet       *string `json:"my_net"`
 	MemberCount int     `json:"member_count"`
 	// Khusus patungan: target dan total terkumpul. Null untuk split/group.
-	TargetAmount    *string   `json:"target_amount,omitempty"`
-	CollectedAmount *string   `json:"collected_amount,omitempty"`
-	UpdatedAt       time.Time `json:"updated_at"`
+	TargetAmount    *string    `json:"target_amount,omitempty"`
+	CollectedAmount *string    `json:"collected_amount,omitempty"`
+	Plan            string     `json:"plan"`
+	ReadOnly        bool       `json:"read_only"`
+	ExpiredAt       *time.Time `json:"expired_at,omitempty"`
+	UpdatedAt       time.Time  `json:"updated_at"`
 }

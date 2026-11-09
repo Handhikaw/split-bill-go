@@ -693,6 +693,9 @@ func (s *billServiceImpl) ListMyBills(userID int64, limit int) ([]dto.MyBillItem
 			MemberCount:     summary.memberCount,
 			TargetAmount:    summary.targetAmount,
 			CollectedAmount: summary.collectedAmount,
+			Plan:            summary.plan,
+			ReadOnly:        summary.readOnly,
+			ExpiredAt:       summary.expiredAt,
 			UpdatedAt:       summary.updated,
 		})
 	}
@@ -706,6 +709,9 @@ type myBillSummary struct {
 	collectedAmount *string
 	myNet           *string
 	memberCount     int
+	plan            string
+	readOnly        bool
+	expiredAt       *time.Time
 	updated         time.Time
 }
 
@@ -722,6 +728,14 @@ func (s *billServiceImpl) summarizeBillForUser(
 		return myBillSummary{}, model.NewInternalError("Database error")
 	}
 	summary.memberCount = len(participants)
+
+	access, err := LoadBillAccess(s.db, &bill)
+	if err != nil {
+		return myBillSummary{}, err
+	}
+	summary.plan = access.Plan
+	summary.readOnly = access.ReadOnly
+	summary.expiredAt = bill.ExpiredAt
 
 	var lastAct *time.Time
 	if err := s.db.Table("activity_logs").
