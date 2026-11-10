@@ -17,6 +17,7 @@ type paymentServiceImpl struct {
 	repo            repository.PaymentRepository
 	repoBill        repository.BillRepository
 	repoParticipant repository.ParticipantRepository
+	repoExpense     repository.ExpenseRepository
 	db              *gorm.DB
 }
 
@@ -24,12 +25,14 @@ func NewPaymentService(
 	repo repository.PaymentRepository,
 	repoBill repository.BillRepository,
 	repoParticipant repository.ParticipantRepository,
+	repoExpense repository.ExpenseRepository,
 	db *gorm.DB,
 ) PaymentService {
 	return &paymentServiceImpl{
 		repo:            repo,
 		repoBill:        repoBill,
 		repoParticipant: repoParticipant,
+		repoExpense:     repoExpense,
 		db:              db,
 	}
 }
@@ -98,4 +101,79 @@ func (p *paymentServiceImpl) ProcessPayment(publicID string, req dto.PaymentRq) 
 	}
 
 	return p.repo.SavePaymentTransaction(payment)
+}
+
+// ReplaceExpensePayments mengganti seluruh payer satu expense.
+// payments kosong = hapus semua payer (expense belum/tidak dibayar).
+func (p *paymentServiceImpl) ReplaceExpensePayments(
+	publicID string,
+	req dto.ReplacePaymentsRq,
+) error {
+	bill, err := p.repoBill.GetBillByPublicID(publicID)
+	if err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return model.NewNotFound("Bill not found")
+		}
+		return model.NewInternalError("Database error")
+	}
+
+	access, err := LoadBillAccess(p.db, bill)
+	if err != nil {
+		return err
+	}
+	if access.ReadOnly {
+		return access.ReadOnlyError()
+	}
+
+	expense, err := p.repoExpense.FindExpenseByID(p.db, req.ExpenseID)
+	if err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return model.NewNotFound("Expense not found")
+		}
+		return model.NewInternalError("Database error")
+	}
+	if expense.BillID != bill.ID {
+		return model.NewNotFound("Expense not found in this bill")
+	}
+
+	seen := make(map[int64]bool, len(req.Payments))
+	payments := make([]entity.Payment, 0, len(req.Payments))
+	for _, item := range req.Payments {
+		if item.ParticipantID <= 0 {
+			return model.NewBadRequest("participant_id invalid")
+		}
+		if seen[item.ParticipantID] {
+			return model.NewBadRequest("participant pembayar duplikat")
+		}
+		seen[item.ParticipantID] = true
+
+		exists, err := p.repoParticipant.ExistsByIDAndBillID(item.ParticipantID, bill.ID)
+		if err != nil {
+			return model.NewInternalError("Database error")
+		}
+		if !exists {
+			return model.NewBadRequest("participant_id bukan peserta bill ini")
+		}
+
+		amount, err := money.FromString(item.Amount, bill.Currency)
+		if err != nil {
+			return model.NewBadRequest("invalid amount format")
+		}
+		if !amount.IsPositive() {
+			return model.NewBadRequest("amount must be greater than zero")
+		}
+
+		payments = append(payments, entity.Payment{
+			BillID:    bill.ID,
+			ExpenseID: req.ExpenseID,
+			PaidBy:    item.ParticipantID,
+			Amount:    amount.Amount,
+			PaidAt:    time.Now(),
+		})
+	}
+
+	if err := p.repo.ReplaceExpensePayments(bill.ID, req.ExpenseID, payments); err != nil {
+		return model.NewInternalError("gagal menyimpan pembayar")
+	}
+	return nil
 }

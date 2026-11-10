@@ -88,6 +88,12 @@ type ExpenseParticipant struct {
 	ShareAmount   string `json:"share_amount"`
 }
 
+type ExpensePayment struct {
+	ParticipantID int64  `json:"participant_id"`
+	Name          string `json:"name"`
+	Amount        string `json:"amount"`
+}
+
 type Expense struct {
 	ID           int64                `json:"id"`
 	Title        string               `json:"title"`
@@ -99,6 +105,7 @@ type Expense struct {
 	Created_By   string               `json:"created_by"` // participant name
 	Created_At   time.Time            `json:"created_at"`
 	Participants []ExpenseParticipant `json:"participants"`
+	Payments     []ExpensePayment     `json:"payments"`
 	Items        *[]ExpenseItem       `json:"items"`
 }
 

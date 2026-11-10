@@ -545,6 +545,15 @@ func (s *billServiceImpl) GetGroupBill(publicID string, viewerUserID *int64) (dt
 		participantNameByID[p.ID] = p.Name
 	}
 
+	paymentsByExpenseID := make(map[int64][]dto.ExpensePayment, len(expenses))
+	for _, pay := range payments {
+		paymentsByExpenseID[pay.ExpenseID] = append(paymentsByExpenseID[pay.ExpenseID], dto.ExpensePayment{
+			ParticipantID: pay.PaidBy,
+			Name:          participantNameByID[pay.PaidBy],
+			Amount:        money.New(pay.Amount, bill.Currency).String(),
+		})
+	}
+
 	categoryNameByID := map[int64]string{}
 	categoryIDs := make([]int64, 0, len(expenses))
 	seenCategory := map[int64]bool{}
@@ -601,6 +610,10 @@ func (s *billServiceImpl) GetGroupBill(publicID string, viewerUserID *int64) (dt
 		if expenseParticipants == nil {
 			expenseParticipants = []dto.ExpenseParticipant{}
 		}
+		expensePayments := paymentsByExpenseID[exp.ID]
+		if expensePayments == nil {
+			expensePayments = []dto.ExpensePayment{}
+		}
 
 		expenseDTO = append(expenseDTO, dto.Expense{
 			ID:           exp.ID,
@@ -613,6 +626,7 @@ func (s *billServiceImpl) GetGroupBill(publicID string, viewerUserID *int64) (dt
 			Created_By:   createdByName,
 			Created_At:   exp.CreatedAt,
 			Participants: expenseParticipants,
+			Payments:     expensePayments,
 			Items:        &itemsDTO,
 		})
 	}

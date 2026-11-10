@@ -7,4 +7,6 @@ type PaymentRepository interface {
 	SavePaymentTransaction(payment entity.Payment) error
 	MovePaymentTransaction(billID, expenseID, oldPaidBy int64, payment entity.Payment) error
 	DeletePayment(billID, expenseID, paidBy int64) error
+	// ReplaceExpensePayments menghapus semua payer expense lalu insert ulang.
+	ReplaceExpensePayments(billID, expenseID int64, payments []entity.Payment) error
 }

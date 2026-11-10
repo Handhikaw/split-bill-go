@@ -112,6 +112,18 @@ func (s *stubPaymentRepo) DeletePayment(billID, expenseID, paidBy int64) error {
 	return gorm.ErrRecordNotFound
 }
 
+func (s *stubPaymentRepo) ReplaceExpensePayments(billID, expenseID int64, payments []entity.Payment) error {
+	kept := s.payments[:0]
+	for _, p := range s.payments {
+		if p.BillID == billID && p.ExpenseID == expenseID {
+			continue
+		}
+		kept = append(kept, p)
+	}
+	s.payments = append(kept, payments...)
+	return nil
+}
+
 // ---------- helpers ----------
 
 func testBill() *entity.Bill {
@@ -124,6 +136,7 @@ func paymentSvc(payments []entity.Payment) (service.PaymentService, *stubPayment
 		payRepo,
 		&stubBillRepo{bill: testBill()},
 		&stubParticipantRepo{members: map[int64]bool{23: true, 24: true}},
+		nil,
 		nil,
 	)
 	return svc, payRepo

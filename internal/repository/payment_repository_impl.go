@@ -76,3 +76,19 @@ func (p *paymentRepositoryImpl) GetPaymentsByBillID(billId int64) ([]entity.Paym
 	err := p.db.Where("bill_id = ?", billId).Find(&payments).Error
 	return payments, err
 }
+
+func (p *paymentRepositoryImpl) ReplaceExpensePayments(
+	billID, expenseID int64,
+	payments []entity.Payment,
+) error {
+	return p.db.Transaction(func(tx *gorm.DB) error {
+		if err := tx.Where("bill_id = ? AND expense_id = ?", billID, expenseID).
+			Delete(&entity.Payment{}).Error; err != nil {
+			return err
+		}
+		if len(payments) == 0 {
+			return nil
+		}
+		return tx.Create(&payments).Error
+	})
+}
