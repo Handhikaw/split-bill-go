@@ -51,19 +51,20 @@ type GoalParticipantProgress struct {
 }
 
 type GetGoalBillRs struct {
-	ID             int64                     `json:"id"`
-	Status         string                    `json:"status"`
-	Name           string                    `json:"name"`
-	Currency       string                    `json:"currency"`
-	TargetAmount   string                    `json:"target_amount"`
-	TotalCollected string                    `json:"total_collected"`
-	Remaining      string                    `json:"remaining"`
-	Description    *string                   `json:"description"`
-	ExpiredAt      *time.Time                `json:"expired_at"`
-	Plan           string                    `json:"plan"`
-	ReadOnly       bool                      `json:"read_only"`
-	Limits         BillLimits                `json:"limits"`
-	Usage          BillUsage                 `json:"usage"`
-	Participants   []GoalParticipantProgress `json:"participants"`
-	Contributions  []GoalContributionItem    `json:"contributions"`
+	ID              int64                     `json:"id"`
+	Status          string                    `json:"status"`
+	Name            string                    `json:"name"`
+	Currency        string                    `json:"currency"`
+	TargetAmount    string                    `json:"target_amount"`
+	TotalCollected  string                    `json:"total_collected"`
+	Remaining       string                    `json:"remaining"`
+	Description     *string                   `json:"description"`
+	ExpiredAt       *time.Time                `json:"expired_at"`
+	Plan            string                    `json:"plan"`
+	ReadOnly        bool                      `json:"read_only"`
+	ViewerIsPremium bool                      `json:"viewer_is_premium"`
+	Limits          BillLimits                `json:"limits"`
+	Usage           BillUsage                 `json:"usage"`
+	Participants    []GoalParticipantProgress `json:"participants"`
+	Contributions   []GoalContributionItem    `json:"contributions"`
 }

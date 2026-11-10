@@ -40,8 +40,9 @@ func (h *GoalHandler) CreateGoalBill(c *gin.Context) {
 
 func (h *GoalHandler) GetGoalBill(c *gin.Context) {
 	publicID := c.Param("public_id")
+	viewerID, _ := middleware.AuthUserID(c)
 
-	res, err := h.goalService.GetGoalBill(publicID)
+	res, err := h.goalService.GetGoalBill(publicID, viewerID)
 	if err != nil {
 		_ = c.Error(err)
 		return

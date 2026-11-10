@@ -31,6 +31,7 @@ func RegisterRoutes(r *gin.Engine, db *gorm.DB, cfg *config.Config) {
 	userService := service.NewUserService(userRepo, cfg.JWTSecret, cfg.GoogleClientID, service.NewGoogleTokenVerifier())
 	goalService := service.NewGoalService(goalRepo, billRepo, participantRepo, activityService, db)
 	settlementService := service.NewSettlementService(settlementRepo, billRepo, participantRepo, activityService, db)
+	exportService := service.NewExportService(billRepo, billService, goalService)
 
 	billHandler := handler.NewBillHandler(billService)
 	activityHandler := handler.NewActivityHandler(activityService)
@@ -40,6 +41,7 @@ func RegisterRoutes(r *gin.Engine, db *gorm.DB, cfg *config.Config) {
 	userHandler := handler.NewUserHandler(userService)
 	goalHandler := handler.NewGoalHandler(goalService)
 	settlementHandler := handler.NewSettlementHandler(settlementService)
+	exportHandler := handler.NewExportHandler(exportService)
 
 	apiKeyAuth := middleware.ApiKeyAuthMiddleware(cfg.JWTSecret)
 
@@ -55,12 +57,13 @@ func RegisterRoutes(r *gin.Engine, db *gorm.DB, cfg *config.Config) {
 		api.PUT("/payment/:public_id", paymentHandler.ProcessPayment)
 		api.POST("/settlement/:public_id", middleware.ParticipantMiddleware(), settlementHandler.Create)
 		api.DELETE("/settlement/:public_id/:id", middleware.ParticipantMiddleware(), settlementHandler.Delete)
+		api.GET("/export/:public_id", apiKeyAuth, exportHandler.Export)
 		api.GET("/group-bill/:public_id/activities", activityHandler.GetActivities)
 		api.GET("/split-bills/:public_id/activities", activityHandler.GetActivities)
 
 		// Patungan (goal bill): kontribusi bebas, tanpa expense.
 		api.POST("/goal-bills", apiKeyAuth, goalHandler.CreateGoalBill)
-		api.GET("/goal-bills/:public_id", goalHandler.GetGoalBill)
+		api.GET("/goal-bills/:public_id", apiKeyAuth, goalHandler.GetGoalBill)
 		api.POST("/goal-bills/:public_id/join", apiKeyAuth, billHandler.JoinSplitBill)
 		api.GET("/goal-bills/:public_id/activities", activityHandler.GetActivities)
 		api.PATCH("/goal-bills/:public_id", middleware.ParticipantMiddleware(), goalHandler.UpdateGoalBill)

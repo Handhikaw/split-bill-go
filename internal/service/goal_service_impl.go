@@ -160,7 +160,7 @@ func (s *goalServiceImpl) CreateGoalBill(req dto.CreateGoalBillRq, actorUserID *
 	}, nil
 }
 
-func (s *goalServiceImpl) GetGoalBill(publicID string) (dto.GetGoalBillRs, error) {
+func (s *goalServiceImpl) GetGoalBill(publicID string, viewerUserID *int64) (dto.GetGoalBillRs, error) {
 	bill, err := s.repoBill.GetBillByPublicID(publicID)
 	if err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
@@ -252,19 +252,24 @@ func (s *goalServiceImpl) GetGoalBill(publicID string) (dto.GetGoalBillRs, error
 	if err != nil {
 		return dto.GetGoalBillRs{}, err
 	}
+	viewerPremium, err := IsPremiumUser(s.db, viewerUserID)
+	if err != nil {
+		return dto.GetGoalBillRs{}, err
+	}
 
 	return dto.GetGoalBillRs{
-		ID:             bill.ID,
-		Status:         bill.Status,
-		Name:           bill.Name,
-		Currency:       bill.Currency,
-		TargetAmount:   money.New(goal.TargetAmount, bill.Currency).String(),
-		TotalCollected: money.New(collected, bill.Currency).String(),
-		Remaining:      money.New(remaining, bill.Currency).String(),
-		Description:    goal.Description,
-		ExpiredAt:      bill.ExpiredAt,
-		Plan:           access.Plan,
-		ReadOnly:       access.ReadOnly,
+		ID:              bill.ID,
+		Status:          bill.Status,
+		Name:            bill.Name,
+		Currency:        bill.Currency,
+		TargetAmount:    money.New(goal.TargetAmount, bill.Currency).String(),
+		TotalCollected:  money.New(collected, bill.Currency).String(),
+		Remaining:       money.New(remaining, bill.Currency).String(),
+		Description:     goal.Description,
+		ExpiredAt:       bill.ExpiredAt,
+		Plan:            access.Plan,
+		ReadOnly:        access.ReadOnly,
+		ViewerIsPremium: viewerPremium,
 		Limits: dto.BillLimits{
 			MaxParticipants: access.MaxParticipants,
 			MaxExpenses:     access.MaxExpenses,
@@ -489,5 +494,5 @@ func (s *goalServiceImpl) UpdateGoalBill(
 		TargetName:    &logName,
 	})
 
-	return s.GetGoalBill(publicID)
+	return s.GetGoalBill(publicID, nil)
 }
