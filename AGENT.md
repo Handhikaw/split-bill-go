@@ -22,9 +22,11 @@ go run ./cmd/api/main.go
 go build ./... && ./split-bill-go
 ```
 - Config: `internal/config/config.go` -> `Load()` baca `.env` (fallback ke env sistem).
-- Env yang dipakai: `APP_NAME, APP_PORT, APP_ENV, JWT_SECRET, GOOGLE_CLIENT_ID, DB_HOST, DB_PORT, DB_USER, DB_PASSWORD, DB_NAME`
+- Env yang dipakai: `APP_NAME, APP_PORT, APP_ENV, JWT_SECRET, GOOGLE_CLIENT_ID, CORS_ALLOWED_ORIGINS, DB_HOST, DB_PORT, DB_USER, DB_PASSWORD, DB_NAME`
 - DSN: `internal/config/database.go` (`InitDB`, Postgres, tanpa `sslmode`).
-- **Gotcha:** `main.go:27` hardcode `r.Run(":8080")`, `cfg.AppPort` hanya untuk log. `gin.ReleaseMode` hanya jika `APP_ENV=production`.
+- CORS: `internal/middleware/cors.go`. Kosong = nonaktif (default, same-origin). Isi `CORS_ALLOWED_ORIGINS` (dipisah koma) kalau frontend beda origin. `*` tidak didukung karena frontend kirim `X-API-Key`.
+- Port: `cmd/api/main.go` pakai `cfg.AppPort`, fallback `8080`. `gin.ReleaseMode` hanya jika `APP_ENV=production`.
+- Deploy Coolify + migrasi DB: lihat `DEPLOY_COOLIFY.md` dan `scripts/`.
 
 ## 4. Struktur Folder
 ```

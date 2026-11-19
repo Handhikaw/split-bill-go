@@ -1,0 +1,20 @@
+# Git / tooling
+.git
+.gitignore
+.codegraph
+
+# Secrets and local env
+.env
+.env.*
+!.env.example
+
+# Local artifacts
+backups/
+*.dump
+*.exe
+*.log
+
+# Docs not needed inside the image
+AGENT.md
+CONCEPT.md
+DEPLOY_COOLIFY.md

@@ -11,6 +11,8 @@ import (
 )
 
 func RegisterRoutes(r *gin.Engine, db *gorm.DB, cfg *config.Config) {
+	r.Use(middleware.CORS(cfg.CORSAllowedOrigins))
+
 	healthHandler := handler.NewHealthHandler()
 
 	// Dependency Injection manual

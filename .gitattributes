@@ -1,0 +1,6 @@
+# Script shell harus tetap LF walau di-checkout di Windows,
+# supaya aman saat di-copy ke host Linux.
+*.sh text eol=lf
+
+# Dump / script SQL tidak masalah CRLF, tapi LF lebih konsisten untuk psql.
+*.sql text eol=lf

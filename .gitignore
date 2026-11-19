@@ -24,3 +24,14 @@ vite.config.ts.timestamp-*
 
 # CodeGraph index
 .codegraph/
+
+# Backups / dump database
+backups/
+*.dump
+*.sql.gz
+
+# Build output
+split-bill-go
+split-bill-go.exe
+*.exe
+*.test

@@ -9,11 +9,12 @@ import (
 )
 
 type Config struct {
-	AppName        string
-	AppPort        string
-	AppEnv         string
-	JWTSecret      string
-	GoogleClientID string
+	AppName            string
+	AppPort            string
+	AppEnv             string
+	JWTSecret          string
+	GoogleClientID     string
+	CORSAllowedOrigins string
 
 	DBHost     string
 	DBPort     string
@@ -34,6 +35,8 @@ func Load() *Config {
 		AppEnv:         os.Getenv("APP_ENV"),
 		JWTSecret:      os.Getenv("JWT_SECRET"),
 		GoogleClientID: os.Getenv("GOOGLE_CLIENT_ID"),
+
+		CORSAllowedOrigins: os.Getenv("CORS_ALLOWED_ORIGINS"),
 
 		DBHost:     os.Getenv("DB_HOST"),
 		DBPort:     os.Getenv("DB_PORT"),
